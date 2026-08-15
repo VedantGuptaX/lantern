@@ -11,7 +11,7 @@ Prometheus scrape config, and SLO burn-rate alerts.
 [![Go](https://img.shields.io/badge/go-1.24+-00ADD8.svg)](https://go.dev)
 [![Status](https://img.shields.io/badge/status-alpha%20(P0)-orange.svg)](#project-status)
 
-[Getting Started](GETTING_STARTED.md) · [Design](DESIGN.md) · [Contributing](CONTRIBUTING.md)
+[Getting Started](GETTING_STARTED.md) · [Design](DESIGN.md) · [Contributing](CONTRIBUTING.md) · [Adopting on a live cluster](docs/adopting-an-existing-cluster.md)
 
 </div>
 

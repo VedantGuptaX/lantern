@@ -11,6 +11,14 @@ Two paths, depending on what you already run:
   Lantern installs nothing and generates config for your existing backends.
   This is the intended production posture.
 
+If the cluster already has **real traffic on it** — an existing UAT or
+production cluster with running microservices, as opposed to an empty
+evaluation cluster — use
+**[docs/adopting-an-existing-cluster.md](docs/adopting-an-existing-cluster.md)**
+instead of following Path A or B directly. It stages the rollout so
+instrumentation injection (which restarts pods) doesn't land on every service
+at once.
+
 ---
 
 ## 0. How Lantern thinks
