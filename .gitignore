@@ -3,3 +3,8 @@ charts/*/charts/
 charts/*/Chart.lock
 *.tgz
 .DS_Store
+
+# Bastion-local session handoff notes (cluster names, resource groups, engagement
+# specifics). Not for the public repo — keep this file local to whichever bastion
+# host runs the AKS onboarding engagement.
+CLAUDE.md
