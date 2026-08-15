@@ -38,11 +38,32 @@ labels, and ignores everything Lantern emits.
 Both are set in `values-quickstart.yaml`. If you run these components yourself,
 check them.
 
-## Before publishing
+## Status: written, never installed
 
-Subchart versions in `Chart.yaml` are version *patterns*, written without
-network access to the chart repositories. Run these on a machine with Helm
-before tagging a release:
+This chart has not been resolved by `helm dependency update`, linted, rendered,
+or installed. Treat it as a first draft.
+
+Subchart versions were checked against upstream release pages in August 2026,
+which caught two real problems worth knowing about:
+
+- **Grafana's Loki and Tempo charts moved repositories** on 30 January 2026,
+  from `grafana/helm-charts` to `grafana-community/helm-charts`. The old URL
+  still serves archived versions but gets no new releases.
+- **Loki jumped from 6.55.0 to the 17/18 series** — twelve majors of breaking
+  changes. The default deployment mode changed from SimpleScalable to
+  Monolithic, Enterprise support was removed, and the bundled MinIO is
+  deprecated. The Loki block in `values-quickstart.yaml` is the least
+  trustworthy part of this chart; if the install fails there, use
+  `--set loki.enabled=false` and carry on. Metrics, traces, instrumentation
+  and alerts do not depend on Loki.
+
+To verify:
+
+```bash
+../../scripts/verify-kind.sh          # everything, on a throwaway kind cluster
+```
+
+or by hand:
 
 ```bash
 helm dependency update charts/lantern-stack

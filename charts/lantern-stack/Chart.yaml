@@ -16,15 +16,15 @@ keywords:
 # these and only need Lantern to point at them; `values-quickstart.yaml` turns
 # them all on for an empty cluster.
 #
-# NOTE BEFORE PUBLISHING: these versions were written without network access to
-# the chart repositories. Run `helm dependency update` and pin to the versions
-# that actually resolve before tagging a release.
+# Versions below were checked against the upstream release pages in August 2026
+# but have NOT been resolved by a real `helm dependency update`. Run that, then
+# `helm lint` and `helm template`, before trusting them.
 dependencies:
   # Provides the Instrumentation and OpenTelemetryCollector CRDs that
   # `lantern synth` emits into. Without this, applying Lantern output fails
   # with `no matches for kind "Instrumentation"`.
   - name: opentelemetry-operator
-    version: "0.90.*"
+    version: "0.115.0"
     repository: https://open-telemetry.github.io/opentelemetry-helm-charts
     condition: opentelemetry-operator.enabled
 
@@ -33,16 +33,26 @@ dependencies:
   # are what supply cluster and node system metrics — Lantern generates no
   # infrastructure scrape config of its own.
   - name: kube-prometheus-stack
-    version: "70.*"
+    version: "86.2.3"
     repository: https://prometheus-community.github.io/helm-charts
     condition: kube-prometheus-stack.enabled
 
+  # NOTE: Grafana's Loki and Tempo charts moved out of grafana/helm-charts to
+  # the community repository on 30 January 2026. The old repository URL still
+  # resolves for archived versions but receives no new releases, so both
+  # dependencies below point at the new location.
+  #
+  # The version jump is not cosmetic: Loki went from 6.55.0 to the 17/18 series,
+  # spanning twelve majors of breaking changes. The default deployment mode
+  # changed from SimpleScalable to Monolithic, Enterprise support was removed,
+  # and the built-in MinIO is deprecated. Treat the Loki values as the least
+  # trustworthy part of this chart until someone runs it.
   - name: tempo
-    version: "1.*"
-    repository: https://grafana.github.io/helm-charts
+    version: "2.2.1"
+    repository: https://grafana-community.github.io/helm-charts
     condition: tempo.enabled
 
   - name: loki
-    version: "6.*"
-    repository: https://grafana.github.io/helm-charts
+    version: "18.7.6"
+    repository: https://grafana-community.github.io/helm-charts
     condition: loki.enabled

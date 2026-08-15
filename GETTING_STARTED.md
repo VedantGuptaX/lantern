@@ -89,6 +89,14 @@ whole product in one command.
 
 You have a cluster (kind, minikube, a fresh EKS/GKE) with nothing installed.
 
+> **Try it on a throwaway cluster first.** `./scripts/verify-kind.sh` creates a
+> kind cluster, runs every step below, applies the result, checks what landed,
+> and writes `verify-report.txt`. The chart has never actually been installed
+> by anyone, so expect to fix something — the report tells you what.
+>
+> Needs `docker` (or Colima), `kind`, `helm`, `kubectl` and `go` on your
+> machine, and about 8GB available to containers.
+
 ### A1. Install the stack
 
 Lantern generates references to CRDs owned by the OpenTelemetry Operator and

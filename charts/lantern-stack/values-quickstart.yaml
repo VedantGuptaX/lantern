@@ -101,19 +101,25 @@ tempo:
 
 loki:
   enabled: true
-  deploymentMode: SingleBinary
+  # Loki chart 18.x defaults to Monolithic mode, so the SingleBinary /
+  # read-write-backend juggling the 6.x chart needed is gone. This is the
+  # least-verified block in the chart — see the note in Chart.yaml. If the
+  # install fails, disable loki (`--set loki.enabled=false`) and continue:
+  # metrics, traces, instrumentation and alerts do not depend on it.
   loki:
     auth_enabled: false
     commonConfig:
       replication_factor: 1
     storage:
       type: filesystem
-  singleBinary:
-    replicas: 1
-  # Demo-scale only; these are the components a real deployment would size.
-  read:
-    replicas: 0
-  write:
-    replicas: 0
-  backend:
-    replicas: 0
+    # 18.x requires an explicit schema config; TSDB with v13 is the current
+    # recommended pairing.
+    schemaConfig:
+      configs:
+        - from: "2024-04-01"
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
