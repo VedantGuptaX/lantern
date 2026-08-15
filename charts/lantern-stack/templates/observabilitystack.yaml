@@ -1,0 +1,83 @@
+{{/*
+The ObservabilityStack is rendered into a ConfigMap rather than applied as a
+custom resource.
+
+P0 has no operator and therefore no CRDs, so an ObservabilityStack CR would be
+rejected by the API server. A ConfigMap works today and stays useful later:
+the chart describes the backends it just installed, and `lantern synth` reads
+that description back. The chart and the compiler agree because the chart is
+the one telling the compiler what exists.
+
+  kubectl get cm -n {{ include "lantern.namespace" . }} {{ .Release.Name }}-stack \
+    -o jsonpath='{.data.stack\.yaml}' > stack.yaml
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-stack
+  namespace: {{ include "lantern.namespace" . }}
+  labels:
+    {{- include "lantern.labels" . | nindent 4 }}
+data:
+  stack.yaml: |
+    apiVersion: lantern.dev/v1alpha1
+    kind: ObservabilityStack
+    metadata:
+      name: {{ .Release.Name }}
+    spec:
+      backends:
+        metrics:
+          type: {{ .Values.backends.metrics.type }}
+          operator: {{ .Values.backends.metrics.operator }}
+          {{- with (include "lantern.metricsRemoteWrite" .) }}
+          remoteWrite: {{ . }}
+          {{- end }}
+          {{- with (include "lantern.metricsQueryURL" .) }}
+          queryURL: {{ . }}
+          {{- end }}
+          {{- with .Values.backends.metrics.datasource }}
+          datasource: {{ . }}
+          {{- end }}
+          {{- with .Values.backends.metrics.ruleNamespace }}
+          ruleNamespace: {{ . }}
+          {{- end }}
+        traces:
+          type: {{ .Values.backends.traces.type }}
+          {{- with (include "lantern.tracesEndpoint" .) }}
+          otlpEndpoint: {{ . }}
+          {{- end }}
+          {{- with .Values.backends.traces.datasource }}
+          datasource: {{ . }}
+          {{- end }}
+        logs:
+          type: {{ .Values.backends.logs.type }}
+          {{- with (include "lantern.logsEndpoint" .) }}
+          endpoint: {{ . }}
+          {{- end }}
+          {{- with .Values.backends.logs.datasource }}
+          datasource: {{ . }}
+          {{- end }}
+        dashboards:
+          type: {{ .Values.backends.dashboards.type }}
+          folderStrategy: {{ .Values.backends.dashboards.folderStrategy }}
+          {{- with .Values.backends.dashboards.instanceLabels }}
+          instanceLabels:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+
+      instrumentation:
+        provider: {{ .Values.instrumentation.provider }}
+        namespace: {{ include "lantern.namespace" . }}
+        {{- with (include "lantern.collectorEndpoint" .) }}
+        collector: {{ . }}
+        {{- end }}
+        ebpf:
+          enabled: {{ .Values.instrumentation.ebpf.enabled }}
+          provider: {{ .Values.instrumentation.ebpf.provider }}
+          privileged: {{ .Values.instrumentation.ebpf.privileged }}
+
+      policy:
+        {{- toYaml .Values.policy | nindent 8 }}
+
+      defaults:
+        {{- toYaml .Values.defaults | nindent 8 }}

@@ -1,0 +1,24 @@
+apiVersion: lantern.dev/v1alpha1
+kind: ServiceObservability
+metadata:
+  name: settlement-worker
+  namespace: shop
+spec:
+  target:
+    kind: Deployment
+    name: settlement-worker
+  serviceKind: custom
+  team: payments
+  signals:
+    metrics: true
+    traces:
+      enabled: false
+  slos:
+    - name: freshness
+      type: custom
+      objective: 99.0
+      window: 7d
+      errorQuery: sum(rate(settlement_batches_stale_total[{{.window}}]))
+      totalQuery: sum(rate(settlement_batches_total[{{.window}}]))
+  instrumentation:
+    mode: none

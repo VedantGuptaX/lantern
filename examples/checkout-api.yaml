@@ -1,0 +1,34 @@
+apiVersion: lantern.dev/v1alpha1
+kind: ServiceObservability
+metadata:
+  name: checkout-api
+  namespace: shop
+spec:
+  target:
+    kind: Deployment
+    name: checkout-api
+    metricsPort: http-metrics
+  serviceKind: http
+  team: payments
+
+  signals:
+    traces:
+      enabled: true
+      samplingRate: 0.1
+    logs:
+      enabled: true
+      correlateTraceID: true
+
+  slos:
+    - name: availability
+      type: availability
+      objective: 99.9
+      window: 30d
+    - name: latency
+      type: latency
+      objective: 99.0
+      threshold: 300ms
+      window: 30d
+
+  instrumentation:
+    runtime: java

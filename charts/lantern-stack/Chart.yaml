@@ -1,0 +1,48 @@
+apiVersion: v2
+name: lantern-stack
+description: |
+  The backends Lantern compiles against. Bring-your-own by default; set
+  quickstart values to install a complete stack on an empty cluster.
+type: application
+version: 0.1.0
+appVersion: "0.1.0-p0"
+keywords:
+  - observability
+  - opentelemetry
+  - prometheus
+  - slo
+
+# Every dependency is OFF by default. `values.yaml` assumes you already run
+# these and only need Lantern to point at them; `values-quickstart.yaml` turns
+# them all on for an empty cluster.
+#
+# NOTE BEFORE PUBLISHING: these versions were written without network access to
+# the chart repositories. Run `helm dependency update` and pin to the versions
+# that actually resolve before tagging a release.
+dependencies:
+  # Provides the Instrumentation and OpenTelemetryCollector CRDs that
+  # `lantern synth` emits into. Without this, applying Lantern output fails
+  # with `no matches for kind "Instrumentation"`.
+  - name: opentelemetry-operator
+    version: "0.90.*"
+    repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+    condition: opentelemetry-operator.enabled
+
+  # Provides the ServiceMonitor and PrometheusRule CRDs, plus Prometheus,
+  # Alertmanager, Grafana, node-exporter and kube-state-metrics. The last two
+  # are what supply cluster and node system metrics — Lantern generates no
+  # infrastructure scrape config of its own.
+  - name: kube-prometheus-stack
+    version: "70.*"
+    repository: https://prometheus-community.github.io/helm-charts
+    condition: kube-prometheus-stack.enabled
+
+  - name: tempo
+    version: "1.*"
+    repository: https://grafana.github.io/helm-charts
+    condition: tempo.enabled
+
+  - name: loki
+    version: "6.*"
+    repository: https://grafana.github.io/helm-charts
+    condition: loki.enabled

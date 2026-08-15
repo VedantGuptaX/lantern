@@ -1,0 +1,60 @@
+apiVersion: lantern.dev/v1alpha1
+kind: ObservabilityStack
+metadata:
+  name: default
+spec:
+  backends:
+    metrics:
+      type: mimir
+      remoteWrite: http://mimir.observability:9009/api/v1/push
+      queryURL: http://mimir.observability:9009/prometheus
+      operator: prometheus-operator
+      datasource: prom-main
+    traces:
+      type: tempo
+      otlpEndpoint: http://otel-collector.observability:4318
+      datasource: tempo-main
+    logs:
+      type: loki
+      endpoint: http://loki.observability:3100
+      datasource: loki-main
+    dashboards:
+      type: grafana
+      folderStrategy: per-team
+      instanceRef:
+        name: main
+        namespace: observability
+      instanceLabels:
+        dashboards: main
+
+  instrumentation:
+    provider: otel-operator
+    namespace: observability
+    collector: http://otel-collector.observability:4318
+    ebpf:
+      enabled: true
+      provider: obi
+      privileged: true
+
+  policy:
+    maxSeriesPerService: 25000
+    minSamplingRate: 0.01
+    maxSamplingRate: 1.0
+    requireTeamLabel: true
+    maxRouteCardinality: 200
+    denyLabels:
+      - user_id
+      - email
+      - session_id
+      - request_id
+
+  defaults:
+    environment: production
+    slo:
+      availability: 99.9
+      latency:
+        objective: 99.0
+        threshold: 500ms
+    retention:
+      traces: 7d
+      metrics: 30d

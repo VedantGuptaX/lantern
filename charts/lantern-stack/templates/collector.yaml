@@ -1,0 +1,121 @@
+{{- if .Values.collector.enabled }}
+{{/*
+The collector every injected agent exports to.
+
+Nothing in P0 deployed this, which meant `lantern synth` produced correct
+Instrumentation CRs pointing at an OTLP endpoint that did not exist. Telemetry
+was configured but never actually flowed. This closes that gap.
+
+It is an OpenTelemetryCollector custom resource, so it requires the
+OpenTelemetry Operator. Enable the subchart, or install the operator yourself
+before enabling this.
+*/}}
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: {{ .Release.Name }}-collector
+  namespace: {{ include "lantern.namespace" . }}
+  labels:
+    {{- include "lantern.labels" . | nindent 4 }}
+spec:
+  mode: deployment
+  replicas: {{ .Values.collector.replicas }}
+  image: {{ .Values.collector.image }}
+  resources:
+    {{- toYaml .Values.collector.resources | nindent 4 }}
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+
+    processors:
+      # Bound memory before the collector is OOMKilled under a traffic spike.
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+
+      batch:
+        timeout: 5s
+        send_batch_size: 8192
+
+      # Attach Kubernetes metadata so telemetry carries pod, namespace and
+      # workload identity without every service configuring it by hand.
+      k8sattributes:
+        auth_type: serviceAccount
+        passthrough: false
+        extract:
+          metadata:
+            - k8s.namespace.name
+            - k8s.pod.name
+            - k8s.deployment.name
+            - k8s.node.name
+
+      # Cardinality control. policy.maxRouteCardinality in the
+      # ObservabilityStack is the intent; this is where it is enforced on the
+      # data path. High-cardinality identifiers in http.route are the single
+      # most common way a well-meaning team melts a Prometheus instance.
+      transform/route_cardinality:
+        error_mode: ignore
+        metric_statements:
+          - context: datapoint
+            statements:
+              # Collapse numeric path segments, which are almost always IDs.
+              - replace_pattern(attributes["http.route"], "/[0-9]+", "/{id}")
+              - replace_pattern(attributes["http.route"], "/[0-9a-fA-F-]{36}", "/{uuid}")
+
+      # Drop attributes the stack policy forbids, before they ever reach
+      # storage.
+      attributes/deny:
+        actions:
+          {{- range .Values.policy.denyLabels }}
+          - key: {{ . }}
+            action: delete
+          {{- end }}
+
+    exporters:
+      {{- with (include "lantern.tracesEndpoint" .) }}
+      otlp/traces:
+        endpoint: {{ . }}
+        tls:
+          insecure: true
+      {{- end }}
+      {{- with (include "lantern.metricsRemoteWrite" .) }}
+      prometheusremotewrite:
+        endpoint: {{ . }}
+        # Emit resource attributes as labels so the SLI selectors the compiler
+        # generates (service_name, deployment_environment) actually resolve.
+        # Without this, every generated alert silently never fires.
+        resource_to_telemetry_conversion:
+          enabled: true
+        tls:
+          insecure: true
+      {{- end }}
+      {{- with (include "lantern.logsEndpoint" .) }}
+      otlphttp/logs:
+        logs_endpoint: {{ . }}/otlp/v1/logs
+        tls:
+          insecure: true
+      {{- end }}
+      debug:
+        verbosity: basic
+
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, attributes/deny, batch]
+          exporters: [{{ if (include "lantern.tracesEndpoint" .) }}otlp/traces{{ else }}debug{{ end }}]
+        metrics:
+          receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, transform/route_cardinality, attributes/deny, batch]
+          exporters: [{{ if (include "lantern.metricsRemoteWrite" .) }}prometheusremotewrite{{ else }}debug{{ end }}]
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, attributes/deny, batch]
+          exporters: [{{ if (include "lantern.logsEndpoint" .) }}otlphttp/logs{{ else }}debug{{ end }}]
+{{- end }}

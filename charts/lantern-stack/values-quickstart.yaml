@@ -1,0 +1,119 @@
+# QUICKSTART: a complete observability stack on an empty cluster.
+#
+#   helm dependency update charts/lantern-stack
+#   helm install lantern charts/lantern-stack \
+#     -n observability --create-namespace \
+#     -f charts/lantern-stack/values-quickstart.yaml
+#
+# This installs real backends into your cluster. It exists so the project is
+# demonstrable in five minutes, and so P1 dashboard work has somewhere to run.
+# It is NOT a production deployment: storage is ephemeral, retention is short,
+# and there is no HA. A team running this for real should size the subcharts
+# themselves, or keep the default bring-your-own posture.
+
+namespace: observability
+
+instrumentation:
+  provider: otel-operator
+  ebpf:
+    # Still off. eBPF needs privileged containers and node access; that should
+    # be a deliberate decision even in a demo.
+    enabled: false
+
+collector:
+  enabled: true
+  replicas: 1
+
+policy:
+  requireTeamLabel: false
+
+defaults:
+  environment: dev
+  slo:
+    availability: 99.9
+    latency:
+      objective: 99.0
+      threshold: 500ms
+
+# ---------------------------------------------------------------------------
+# Everything on.
+# ---------------------------------------------------------------------------
+
+opentelemetry-operator:
+  enabled: true
+  manager:
+    collectorImage:
+      repository: otel/opentelemetry-collector-contrib
+
+kube-prometheus-stack:
+  enabled: true
+  # node-exporter and kube-state-metrics are what produce cluster and node
+  # system metrics. Lantern generates no infrastructure scrape config itself,
+  # so these are the source of the "system metrics" half of the stack.
+  nodeExporter:
+    enabled: true
+  kubeStateMetrics:
+    enabled: true
+  prometheus:
+    prometheusSpec:
+      retention: 24h
+      # Pick up ServiceMonitors and PrometheusRules from every namespace,
+      # regardless of Helm release labels. Without this, Prometheus ignores
+      # everything `lantern synth` emits.
+      serviceMonitorSelectorNilUsesHelmValues: false
+      ruleSelectorNilUsesHelmValues: false
+      podMonitorSelectorNilUsesHelmValues: false
+      enableRemoteWriteReceiver: true
+  grafana:
+    enabled: true
+    adminPassword: lantern
+    # Labelled so P1's GrafanaDashboard resources can select this instance.
+    labels:
+      dashboards: main
+    sidecar:
+      dashboards:
+        enabled: true
+        searchNamespace: ALL
+      datasources:
+        enabled: true
+    additionalDataSources:
+      - name: Tempo
+        type: tempo
+        uid: tempo-main
+        url: http://lantern-tempo.observability:3100
+        access: proxy
+      - name: Loki
+        type: loki
+        uid: loki-main
+        url: http://lantern-loki.observability:3100
+        access: proxy
+
+tempo:
+  enabled: true
+  tempo:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+
+loki:
+  enabled: true
+  deploymentMode: SingleBinary
+  loki:
+    auth_enabled: false
+    commonConfig:
+      replication_factor: 1
+    storage:
+      type: filesystem
+  singleBinary:
+    replicas: 1
+  # Demo-scale only; these are the components a real deployment would size.
+  read:
+    replicas: 0
+  write:
+    replicas: 0
+  backend:
+    replicas: 0

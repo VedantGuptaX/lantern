@@ -1,0 +1,64 @@
+lantern-stack {{ .Chart.Version }} installed into namespace {{ include "lantern.namespace" . }}.
+
+{{ if (index .Values "kube-prometheus-stack" "enabled") -}}
+Mode: QUICKSTART — backends were installed into this cluster.
+
+  Prometheus Operator   CRDs for ServiceMonitor and PrometheusRule
+  Prometheus            metrics storage
+  Grafana               admin / {{ index .Values "kube-prometheus-stack" "grafana" "adminPassword" | default "see values" }}
+  node-exporter         node system metrics
+  kube-state-metrics    cluster object metrics
+{{ if (index .Values "tempo" "enabled") }}  Tempo                 traces
+{{ end }}{{ if (index .Values "loki" "enabled") }}  Loki                  logs
+{{ end }}{{ if (index .Values "opentelemetry-operator" "enabled") }}  OTel Operator         agent injection
+{{ end }}
+This is a demo-scale deployment: ephemeral storage, short retention, no HA.
+Do not run it as production without sizing the subcharts yourself.
+{{- else -}}
+Mode: BRING YOUR OWN BACKEND — nothing was installed.
+
+The chart rendered an ObservabilityStack describing the backends you already
+run. Verify the addresses below are reachable from this cluster.
+{{- end }}
+
+Resolved backends:
+
+  metrics remoteWrite  {{ include "lantern.metricsRemoteWrite" . | default "(NOT SET — set backends.metrics.remoteWrite)" }}
+  metrics queryURL     {{ include "lantern.metricsQueryURL" . | default "(NOT SET — set backends.metrics.queryURL)" }}
+  traces OTLP          {{ include "lantern.tracesEndpoint" . | default "(NOT SET — set backends.traces.otlpEndpoint)" }}
+  logs                 {{ include "lantern.logsEndpoint" . | default "(NOT SET — set backends.logs.endpoint)" }}
+  collector            {{ include "lantern.collectorEndpoint" . | default "(disabled)" }}
+
+Next steps
+──────────
+
+1. Extract the stack description this chart generated:
+
+     kubectl get cm -n {{ include "lantern.namespace" . }} {{ .Release.Name }}-stack \
+       -o jsonpath='{.data.stack\.yaml}' > stack.yaml
+
+2. Draft specs for everything already running on the cluster:
+
+     kubectl get deploy,statefulset,daemonset,cronjob -A -o yaml \
+       | lantern discover - -team unassigned > services.yaml
+
+3. Read services.yaml. Every value in it was inferred; lines marked REVIEW are
+   guesses that most likely need editing. Fix the teams especially — alerts
+   cannot be routed without them.
+
+4. Compile and apply:
+
+     lantern synth -stack stack.yaml services.yaml | kubectl apply -f -
+
+{{ if (index .Values "kube-prometheus-stack" "enabled") -}}
+5. Open Grafana:
+
+     kubectl port-forward -n {{ include "lantern.namespace" . }} svc/{{ .Release.Name }}-grafana 3000:80
+
+   You will find the cluster and node dashboards that kube-prometheus-stack
+   ships, and the SLO burn-rate alerts Lantern generated under Alerting.
+
+   NOTE: per-service Lantern dashboards are NOT generated yet — that is P1.
+   Until then, Lantern produces instrumentation, scrape config and alerts;
+   the dashboards you see are the ones kube-prometheus-stack provides.
+{{- end }}

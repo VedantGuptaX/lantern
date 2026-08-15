@@ -1,0 +1,201 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkout-api
+  namespace: shop
+  labels:
+    app: checkout-api
+    team: payments
+spec:
+  selector:
+    matchLabels:
+      app: checkout-api
+  template:
+    metadata:
+      labels:
+        app: checkout-api
+    spec:
+      containers:
+        - name: app
+          image: eclipse-temurin:21-jre
+          command: ["java"]
+          args: ["-jar", "/app/checkout.jar"]
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: metrics
+              containerPort: 9464
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pricing-svc
+  namespace: shop
+  labels:
+    app: pricing-svc
+    app.kubernetes.io/part-of: pricing
+spec:
+  selector:
+    matchLabels:
+      app: pricing-svc
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: pricing-svc
+        tier: backend
+    spec:
+      containers:
+        - name: server
+          image: registry.internal/pricing:1.4.2
+          command: ["/bin/pricing-server"]
+          ports:
+            - name: grpc
+              containerPort: 50051
+            - name: metrics
+              containerPort: 9090
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: settlement-worker
+  namespace: shop
+  labels:
+    app: settlement-worker
+    team: payments
+spec:
+  selector:
+    matchLabels:
+      app: settlement-worker
+  template:
+    metadata:
+      labels:
+        app: settlement-worker
+    spec:
+      containers:
+        - name: worker
+          image: python:3.12-slim
+          command: ["python", "-m", "settlement.worker"]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storefront
+  namespace: web
+  labels:
+    app: storefront
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "3000"
+spec:
+  selector:
+    matchLabels:
+      app: storefront
+  template:
+    metadata:
+      labels:
+        app: storefront
+      annotations:
+        instrumentation.opentelemetry.io/inject-nodejs: "true"
+    spec:
+      containers:
+        - name: web
+          image: node:22-alpine
+          ports:
+            - name: http
+              containerPort: 3000
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: session-store
+  namespace: web
+  labels:
+    app: session-store
+    squad: platform
+spec:
+  selector:
+    matchLabels:
+      app: session-store
+  template:
+    metadata:
+      labels:
+        app: session-store
+    spec:
+      containers:
+        - name: cache
+          image: redis:7-alpine
+          ports:
+            - name: redis
+              containerPort: 6379
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly-reconcile
+  namespace: shop
+  labels:
+    team: payments
+spec:
+  schedule: "0 2 * * *"
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: nightly-reconcile
+        spec:
+          containers:
+            - name: job
+              image: registry.internal/reconcile:2.0.0
+              command: ["/bin/reconcile"]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coredns
+  namespace: kube-system
+  labels:
+    k8s-app: kube-dns
+spec:
+  selector:
+    matchLabels:
+      k8s-app: kube-dns
+  template:
+    metadata:
+      labels:
+        k8s-app: kube-dns
+    spec:
+      containers:
+        - name: coredns
+          image: registry.k8s.io/coredns/coredns:v1.11.1
+          ports:
+            - name: dns
+              containerPort: 53
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: already-instrumented-svc
+  namespace: shop
+  labels:
+    app: already-instrumented-svc
+    team: payments
+spec:
+  selector:
+    matchLabels:
+      app: already-instrumented-svc
+  template:
+    metadata:
+      labels:
+        app: already-instrumented-svc
+    spec:
+      containers:
+        - name: app
+          image: registry.internal/orders:3.1.0
+          env:
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector.observability:4318
+          ports:
+            - name: http
+              containerPort: 8080

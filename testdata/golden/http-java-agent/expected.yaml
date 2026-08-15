@@ -1,0 +1,446 @@
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: lantern-default
+  namespace: shop
+  labels:
+    lantern.dev/managed: "true"
+    lantern.dev/service: checkout-api
+    lantern.dev/team: payments
+spec:
+  exporter:
+    endpoint: http://otel-collector.observability:4318
+  propagators:
+    - tracecontext
+    - baggage
+  sampler:
+    type: parentbased_traceidratio
+    argument: "0.1"
+  resource:
+    resourceAttributes:
+      deployment.environment: production
+      service.namespace: shop
+      team: payments
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: checkout-api
+  namespace: shop
+  labels:
+    lantern.dev/managed: "true"
+    lantern.dev/service: checkout-api
+    lantern.dev/team: payments
+spec:
+  selector:
+    matchLabels:
+      app: checkout-api
+  namespaceSelector:
+    matchNames:
+      - shop
+  endpoints:
+    - port: http-metrics
+      interval: 30s
+      path: /metrics
+      metricRelabelings:
+        - action: labeldrop
+          regex: email|request_id|session_id|user_id
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: checkout-api-slo
+  namespace: shop
+  labels:
+    lantern.dev/managed: "true"
+    lantern.dev/service: checkout-api
+    lantern.dev/team: payments
+spec:
+  groups:
+    - name: lantern-sli-recordings-checkout-api-availability
+      rules:
+        - record: lantern:sli_error:ratio_rate5m
+          expr: |-
+            sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production", http_response_status_code=~"5.."}[5m]))
+            /
+            sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production"}[5m]))
+          labels:
+            lantern_id: checkout-api-availability
+            lantern_service: checkout-api
+            lantern_slo: availability
+            lantern_window: 5m
+            team: payments
+        - record: lantern:sli_error:ratio_rate30m
+          expr: |-
+            sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production", http_response_status_code=~"5.."}[30m]))
+            /
+            sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production"}[30m]))
+          labels:
+            lantern_id: checkout-api-availability
+            lantern_service: checkout-api
+            lantern_slo: availability
+            lantern_window: 30m
+            team: payments
+        - record: lantern:sli_error:ratio_rate1h
+          expr: |-
+            sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production", http_response_status_code=~"5.."}[1h]))
+            /
+            sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production"}[1h]))
+          labels:
+            lantern_id: checkout-api-availability
+            lantern_service: checkout-api
+            lantern_slo: availability
+            lantern_window: 1h
+            team: payments
+        - record: lantern:sli_error:ratio_rate2h
+          expr: |-
+            sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production", http_response_status_code=~"5.."}[2h]))
+            /
+            sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production"}[2h]))
+          labels:
+            lantern_id: checkout-api-availability
+            lantern_service: checkout-api
+            lantern_slo: availability
+            lantern_window: 2h
+            team: payments
+        - record: lantern:sli_error:ratio_rate6h
+          expr: |-
+            sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production", http_response_status_code=~"5.."}[6h]))
+            /
+            sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production"}[6h]))
+          labels:
+            lantern_id: checkout-api-availability
+            lantern_service: checkout-api
+            lantern_slo: availability
+            lantern_window: 6h
+            team: payments
+        - record: lantern:sli_error:ratio_rate1d
+          expr: |-
+            sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production", http_response_status_code=~"5.."}[1d]))
+            /
+            sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production"}[1d]))
+          labels:
+            lantern_id: checkout-api-availability
+            lantern_service: checkout-api
+            lantern_slo: availability
+            lantern_window: 1d
+            team: payments
+        - record: lantern:sli_error:ratio_rate3d
+          expr: |-
+            sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production", http_response_status_code=~"5.."}[3d]))
+            /
+            sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production"}[3d]))
+          labels:
+            lantern_id: checkout-api-availability
+            lantern_service: checkout-api
+            lantern_slo: availability
+            lantern_window: 3d
+            team: payments
+    - name: lantern-slo-meta-recordings-checkout-api-availability
+      rules:
+        - record: lantern:objective:ratio
+          expr: 0.999
+          labels:
+            lantern_id: checkout-api-availability
+            lantern_service: checkout-api
+            lantern_slo: availability
+            team: payments
+        - record: lantern:error_budget:ratio
+          expr: 0.001
+          labels:
+            lantern_id: checkout-api-availability
+            lantern_service: checkout-api
+            lantern_slo: availability
+            team: payments
+        - record: lantern:time_period:days
+          expr: 30
+          labels:
+            lantern_id: checkout-api-availability
+            lantern_service: checkout-api
+            lantern_slo: availability
+            team: payments
+        - record: lantern:current_burn_rate:ratio
+          expr: |-
+            lantern:sli_error:ratio_rate5m{lantern_id="checkout-api-availability"}
+            / on(lantern_id) group_left
+            lantern:error_budget:ratio{lantern_id="checkout-api-availability"}
+          labels:
+            lantern_id: checkout-api-availability
+            lantern_service: checkout-api
+            lantern_slo: availability
+            team: payments
+        - record: lantern:period_error_budget_remaining:ratio
+          expr: |-
+            1 - (
+              lantern:sli_error:ratio_rate3d{lantern_id="checkout-api-availability"}
+              / on(lantern_id) group_left
+              lantern:error_budget:ratio{lantern_id="checkout-api-availability"}
+            )
+          labels:
+            lantern_id: checkout-api-availability
+            lantern_service: checkout-api
+            lantern_slo: availability
+            team: payments
+    - name: lantern-slo-alerts-checkout-api-availability
+      rules:
+        - alert: CheckoutApiAvailabilitySLOBurnCritical
+          expr: |-
+            (
+              lantern:sli_error:ratio_rate5m{lantern_id="checkout-api-availability"} > (0.0144)
+              and
+              lantern:sli_error:ratio_rate1h{lantern_id="checkout-api-availability"} > (0.0144)
+            )
+            or
+            (
+              lantern:sli_error:ratio_rate30m{lantern_id="checkout-api-availability"} > (0.006)
+              and
+              lantern:sli_error:ratio_rate6h{lantern_id="checkout-api-availability"} > (0.006)
+            )
+          labels:
+            lantern_id: checkout-api-availability
+            lantern_service: checkout-api
+            lantern_slo: availability
+            severity: critical
+            team: payments
+          annotations:
+            summary: checkout-api is burning its availability error budget too fast
+            description: "SLO \"availability\" (objective 99.9% over 30d) is consuming error budget at a rate that exhausts it before the window ends. Burn-rate windows: 5m/1h at 14.4x, 30m/6h at 6x."
+            runbook_url: https://runbooks.internal/slo/checkout-api-availability
+        - alert: CheckoutApiAvailabilitySLOBurnWarning
+          expr: |-
+            (
+              lantern:sli_error:ratio_rate2h{lantern_id="checkout-api-availability"} > (0.003)
+              and
+              lantern:sli_error:ratio_rate1d{lantern_id="checkout-api-availability"} > (0.003)
+            )
+            or
+            (
+              lantern:sli_error:ratio_rate6h{lantern_id="checkout-api-availability"} > (0.001)
+              and
+              lantern:sli_error:ratio_rate3d{lantern_id="checkout-api-availability"} > (0.001)
+            )
+          labels:
+            lantern_id: checkout-api-availability
+            lantern_service: checkout-api
+            lantern_slo: availability
+            severity: warning
+            team: payments
+          annotations:
+            summary: checkout-api is burning its availability error budget too fast
+            description: "SLO \"availability\" (objective 99.9% over 30d) is consuming error budget at a rate that exhausts it before the window ends. Burn-rate windows: 2h/1d at 3x, 6h/3d at 1x."
+            runbook_url: https://runbooks.internal/slo/checkout-api-availability
+    - name: lantern-sli-recordings-checkout-api-latency
+      rules:
+        - record: lantern:sli_error:ratio_rate5m
+          expr: |-
+            (
+              sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production"}[5m]))
+              -
+              sum(rate(http_server_request_duration_seconds_bucket{service_name="checkout-api", deployment_environment="production", le="0.3"}[5m]))
+            )
+            /
+            sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production"}[5m]))
+          labels:
+            lantern_id: checkout-api-latency
+            lantern_service: checkout-api
+            lantern_slo: latency
+            lantern_window: 5m
+            team: payments
+        - record: lantern:sli_error:ratio_rate30m
+          expr: |-
+            (
+              sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production"}[30m]))
+              -
+              sum(rate(http_server_request_duration_seconds_bucket{service_name="checkout-api", deployment_environment="production", le="0.3"}[30m]))
+            )
+            /
+            sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production"}[30m]))
+          labels:
+            lantern_id: checkout-api-latency
+            lantern_service: checkout-api
+            lantern_slo: latency
+            lantern_window: 30m
+            team: payments
+        - record: lantern:sli_error:ratio_rate1h
+          expr: |-
+            (
+              sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production"}[1h]))
+              -
+              sum(rate(http_server_request_duration_seconds_bucket{service_name="checkout-api", deployment_environment="production", le="0.3"}[1h]))
+            )
+            /
+            sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production"}[1h]))
+          labels:
+            lantern_id: checkout-api-latency
+            lantern_service: checkout-api
+            lantern_slo: latency
+            lantern_window: 1h
+            team: payments
+        - record: lantern:sli_error:ratio_rate2h
+          expr: |-
+            (
+              sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production"}[2h]))
+              -
+              sum(rate(http_server_request_duration_seconds_bucket{service_name="checkout-api", deployment_environment="production", le="0.3"}[2h]))
+            )
+            /
+            sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production"}[2h]))
+          labels:
+            lantern_id: checkout-api-latency
+            lantern_service: checkout-api
+            lantern_slo: latency
+            lantern_window: 2h
+            team: payments
+        - record: lantern:sli_error:ratio_rate6h
+          expr: |-
+            (
+              sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production"}[6h]))
+              -
+              sum(rate(http_server_request_duration_seconds_bucket{service_name="checkout-api", deployment_environment="production", le="0.3"}[6h]))
+            )
+            /
+            sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production"}[6h]))
+          labels:
+            lantern_id: checkout-api-latency
+            lantern_service: checkout-api
+            lantern_slo: latency
+            lantern_window: 6h
+            team: payments
+        - record: lantern:sli_error:ratio_rate1d
+          expr: |-
+            (
+              sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production"}[1d]))
+              -
+              sum(rate(http_server_request_duration_seconds_bucket{service_name="checkout-api", deployment_environment="production", le="0.3"}[1d]))
+            )
+            /
+            sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production"}[1d]))
+          labels:
+            lantern_id: checkout-api-latency
+            lantern_service: checkout-api
+            lantern_slo: latency
+            lantern_window: 1d
+            team: payments
+        - record: lantern:sli_error:ratio_rate3d
+          expr: |-
+            (
+              sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production"}[3d]))
+              -
+              sum(rate(http_server_request_duration_seconds_bucket{service_name="checkout-api", deployment_environment="production", le="0.3"}[3d]))
+            )
+            /
+            sum(rate(http_server_request_duration_seconds_count{service_name="checkout-api", deployment_environment="production"}[3d]))
+          labels:
+            lantern_id: checkout-api-latency
+            lantern_service: checkout-api
+            lantern_slo: latency
+            lantern_window: 3d
+            team: payments
+    - name: lantern-slo-meta-recordings-checkout-api-latency
+      rules:
+        - record: lantern:objective:ratio
+          expr: 0.99
+          labels:
+            lantern_id: checkout-api-latency
+            lantern_service: checkout-api
+            lantern_slo: latency
+            team: payments
+        - record: lantern:error_budget:ratio
+          expr: 0.01
+          labels:
+            lantern_id: checkout-api-latency
+            lantern_service: checkout-api
+            lantern_slo: latency
+            team: payments
+        - record: lantern:time_period:days
+          expr: 30
+          labels:
+            lantern_id: checkout-api-latency
+            lantern_service: checkout-api
+            lantern_slo: latency
+            team: payments
+        - record: lantern:current_burn_rate:ratio
+          expr: |-
+            lantern:sli_error:ratio_rate5m{lantern_id="checkout-api-latency"}
+            / on(lantern_id) group_left
+            lantern:error_budget:ratio{lantern_id="checkout-api-latency"}
+          labels:
+            lantern_id: checkout-api-latency
+            lantern_service: checkout-api
+            lantern_slo: latency
+            team: payments
+        - record: lantern:period_error_budget_remaining:ratio
+          expr: |-
+            1 - (
+              lantern:sli_error:ratio_rate3d{lantern_id="checkout-api-latency"}
+              / on(lantern_id) group_left
+              lantern:error_budget:ratio{lantern_id="checkout-api-latency"}
+            )
+          labels:
+            lantern_id: checkout-api-latency
+            lantern_service: checkout-api
+            lantern_slo: latency
+            team: payments
+    - name: lantern-slo-alerts-checkout-api-latency
+      rules:
+        - alert: CheckoutApiLatencySLOBurnCritical
+          expr: |-
+            (
+              lantern:sli_error:ratio_rate5m{lantern_id="checkout-api-latency"} > (0.144)
+              and
+              lantern:sli_error:ratio_rate1h{lantern_id="checkout-api-latency"} > (0.144)
+            )
+            or
+            (
+              lantern:sli_error:ratio_rate30m{lantern_id="checkout-api-latency"} > (0.06)
+              and
+              lantern:sli_error:ratio_rate6h{lantern_id="checkout-api-latency"} > (0.06)
+            )
+          labels:
+            lantern_id: checkout-api-latency
+            lantern_service: checkout-api
+            lantern_slo: latency
+            severity: critical
+            team: payments
+          annotations:
+            summary: checkout-api is burning its latency error budget too fast
+            description: "SLO \"latency\" (objective 99% over 30d) is consuming error budget at a rate that exhausts it before the window ends. Burn-rate windows: 5m/1h at 14.4x, 30m/6h at 6x."
+            runbook_url: https://runbooks.internal/slo/checkout-api-latency
+        - alert: CheckoutApiLatencySLOBurnWarning
+          expr: |-
+            (
+              lantern:sli_error:ratio_rate2h{lantern_id="checkout-api-latency"} > (0.03)
+              and
+              lantern:sli_error:ratio_rate1d{lantern_id="checkout-api-latency"} > (0.03)
+            )
+            or
+            (
+              lantern:sli_error:ratio_rate6h{lantern_id="checkout-api-latency"} > (0.01)
+              and
+              lantern:sli_error:ratio_rate3d{lantern_id="checkout-api-latency"} > (0.01)
+            )
+          labels:
+            lantern_id: checkout-api-latency
+            lantern_service: checkout-api
+            lantern_slo: latency
+            severity: warning
+            team: payments
+          annotations:
+            summary: checkout-api is burning its latency error budget too fast
+            description: "SLO \"latency\" (objective 99% over 30d) is consuming error budget at a rate that exhausts it before the window ends. Burn-rate windows: 2h/1d at 3x, 6h/3d at 1x."
+            runbook_url: https://runbooks.internal/slo/checkout-api-latency
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checkout-api
+  namespace: shop
+  labels:
+    lantern.dev/managed: "true"
+    lantern.dev/service: checkout-api
+    lantern.dev/team: payments
+spec:
+  template:
+    metadata:
+      annotations:
+        instrumentation.opentelemetry.io/inject-java: lantern-default

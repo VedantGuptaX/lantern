@@ -1,0 +1,25 @@
+apiVersion: lantern.dev/v1alpha1
+kind: ServiceObservability
+metadata:
+  name: pricing-svc
+  namespace: shop
+spec:
+  target:
+    kind: Deployment
+    name: pricing-svc
+    selector:
+      app: pricing-svc
+      tier: backend
+    metricsPort: metrics
+  serviceKind: grpc
+  team: pricing
+  signals:
+    traces:
+      enabled: true
+      samplingRate: 0.5
+  slos:
+    - name: availability
+      type: availability
+      objective: 99.5
+  instrumentation:
+    runtime: go

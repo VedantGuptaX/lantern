@@ -1,0 +1,207 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: settlement-worker
+  namespace: shop
+  labels:
+    lantern.dev/managed: "true"
+    lantern.dev/service: settlement-worker
+    lantern.dev/team: payments
+spec:
+  selector:
+    matchLabels:
+      app: settlement-worker
+  namespaceSelector:
+    matchNames:
+      - shop
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+      metricRelabelings:
+        - action: labeldrop
+          regex: email|request_id|session_id|user_id
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: settlement-worker-slo
+  namespace: shop
+  labels:
+    lantern.dev/managed: "true"
+    lantern.dev/service: settlement-worker
+    lantern.dev/team: payments
+spec:
+  groups:
+    - name: lantern-sli-recordings-settlement-worker-freshness
+      rules:
+        - record: lantern:sli_error:ratio_rate5m
+          expr: |-
+            sum(rate(settlement_batches_stale_total[5m]))
+            /
+            sum(rate(settlement_batches_total[5m]))
+          labels:
+            lantern_id: settlement-worker-freshness
+            lantern_service: settlement-worker
+            lantern_slo: freshness
+            lantern_window: 5m
+            team: payments
+        - record: lantern:sli_error:ratio_rate30m
+          expr: |-
+            sum(rate(settlement_batches_stale_total[30m]))
+            /
+            sum(rate(settlement_batches_total[30m]))
+          labels:
+            lantern_id: settlement-worker-freshness
+            lantern_service: settlement-worker
+            lantern_slo: freshness
+            lantern_window: 30m
+            team: payments
+        - record: lantern:sli_error:ratio_rate1h
+          expr: |-
+            sum(rate(settlement_batches_stale_total[1h]))
+            /
+            sum(rate(settlement_batches_total[1h]))
+          labels:
+            lantern_id: settlement-worker-freshness
+            lantern_service: settlement-worker
+            lantern_slo: freshness
+            lantern_window: 1h
+            team: payments
+        - record: lantern:sli_error:ratio_rate2h
+          expr: |-
+            sum(rate(settlement_batches_stale_total[2h]))
+            /
+            sum(rate(settlement_batches_total[2h]))
+          labels:
+            lantern_id: settlement-worker-freshness
+            lantern_service: settlement-worker
+            lantern_slo: freshness
+            lantern_window: 2h
+            team: payments
+        - record: lantern:sli_error:ratio_rate6h
+          expr: |-
+            sum(rate(settlement_batches_stale_total[6h]))
+            /
+            sum(rate(settlement_batches_total[6h]))
+          labels:
+            lantern_id: settlement-worker-freshness
+            lantern_service: settlement-worker
+            lantern_slo: freshness
+            lantern_window: 6h
+            team: payments
+        - record: lantern:sli_error:ratio_rate1d
+          expr: |-
+            sum(rate(settlement_batches_stale_total[1d]))
+            /
+            sum(rate(settlement_batches_total[1d]))
+          labels:
+            lantern_id: settlement-worker-freshness
+            lantern_service: settlement-worker
+            lantern_slo: freshness
+            lantern_window: 1d
+            team: payments
+        - record: lantern:sli_error:ratio_rate3d
+          expr: |-
+            sum(rate(settlement_batches_stale_total[3d]))
+            /
+            sum(rate(settlement_batches_total[3d]))
+          labels:
+            lantern_id: settlement-worker-freshness
+            lantern_service: settlement-worker
+            lantern_slo: freshness
+            lantern_window: 3d
+            team: payments
+    - name: lantern-slo-meta-recordings-settlement-worker-freshness
+      rules:
+        - record: lantern:objective:ratio
+          expr: 0.99
+          labels:
+            lantern_id: settlement-worker-freshness
+            lantern_service: settlement-worker
+            lantern_slo: freshness
+            team: payments
+        - record: lantern:error_budget:ratio
+          expr: 0.01
+          labels:
+            lantern_id: settlement-worker-freshness
+            lantern_service: settlement-worker
+            lantern_slo: freshness
+            team: payments
+        - record: lantern:time_period:days
+          expr: 7
+          labels:
+            lantern_id: settlement-worker-freshness
+            lantern_service: settlement-worker
+            lantern_slo: freshness
+            team: payments
+        - record: lantern:current_burn_rate:ratio
+          expr: |-
+            lantern:sli_error:ratio_rate5m{lantern_id="settlement-worker-freshness"}
+            / on(lantern_id) group_left
+            lantern:error_budget:ratio{lantern_id="settlement-worker-freshness"}
+          labels:
+            lantern_id: settlement-worker-freshness
+            lantern_service: settlement-worker
+            lantern_slo: freshness
+            team: payments
+        - record: lantern:period_error_budget_remaining:ratio
+          expr: |-
+            1 - (
+              lantern:sli_error:ratio_rate3d{lantern_id="settlement-worker-freshness"}
+              / on(lantern_id) group_left
+              lantern:error_budget:ratio{lantern_id="settlement-worker-freshness"}
+            )
+          labels:
+            lantern_id: settlement-worker-freshness
+            lantern_service: settlement-worker
+            lantern_slo: freshness
+            team: payments
+    - name: lantern-slo-alerts-settlement-worker-freshness
+      rules:
+        - alert: SettlementWorkerFreshnessSLOBurnCritical
+          expr: |-
+            (
+              lantern:sli_error:ratio_rate5m{lantern_id="settlement-worker-freshness"} > (0.144)
+              and
+              lantern:sli_error:ratio_rate1h{lantern_id="settlement-worker-freshness"} > (0.144)
+            )
+            or
+            (
+              lantern:sli_error:ratio_rate30m{lantern_id="settlement-worker-freshness"} > (0.06)
+              and
+              lantern:sli_error:ratio_rate6h{lantern_id="settlement-worker-freshness"} > (0.06)
+            )
+          labels:
+            lantern_id: settlement-worker-freshness
+            lantern_service: settlement-worker
+            lantern_slo: freshness
+            severity: critical
+            team: payments
+          annotations:
+            summary: settlement-worker is burning its freshness error budget too fast
+            description: "SLO \"freshness\" (objective 99% over 7d) is consuming error budget at a rate that exhausts it before the window ends. Burn-rate windows: 5m/1h at 14.4x, 30m/6h at 6x."
+            runbook_url: https://runbooks.internal/slo/settlement-worker-freshness
+        - alert: SettlementWorkerFreshnessSLOBurnWarning
+          expr: |-
+            (
+              lantern:sli_error:ratio_rate2h{lantern_id="settlement-worker-freshness"} > (0.03)
+              and
+              lantern:sli_error:ratio_rate1d{lantern_id="settlement-worker-freshness"} > (0.03)
+            )
+            or
+            (
+              lantern:sli_error:ratio_rate6h{lantern_id="settlement-worker-freshness"} > (0.01)
+              and
+              lantern:sli_error:ratio_rate3d{lantern_id="settlement-worker-freshness"} > (0.01)
+            )
+          labels:
+            lantern_id: settlement-worker-freshness
+            lantern_service: settlement-worker
+            lantern_slo: freshness
+            severity: warning
+            team: payments
+          annotations:
+            summary: settlement-worker is burning its freshness error budget too fast
+            description: "SLO \"freshness\" (objective 99% over 7d) is consuming error budget at a rate that exhausts it before the window ends. Burn-rate windows: 2h/1d at 3x, 6h/3d at 1x."
+            runbook_url: https://runbooks.internal/slo/settlement-worker-freshness

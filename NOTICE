@@ -1,0 +1,32 @@
+Lantern
+Copyright 2026 Vedant Gupta
+
+Licensed under the Apache License, Version 2.0. See LICENSE for details.
+
+This product generates configuration for, and interoperates with, the
+following independent projects. It does not bundle or redistribute their
+code; the references below are for attribution and to make the ecosystem
+Lantern targets explicit.
+
+  - OpenTelemetry (https://opentelemetry.io)
+    Apache License 2.0. Lantern emits Instrumentation and
+    OpenTelemetryCollector custom resources consumed by the OpenTelemetry
+    Operator, and generates queries against OpenTelemetry semantic
+    conventions.
+
+  - Prometheus and the Prometheus Operator (https://prometheus.io)
+    Apache License 2.0. Lantern emits ServiceMonitor and PrometheusRule
+    custom resources.
+
+  - Grafana (https://grafana.com)
+    AGPL-3.0 for the Grafana server; the grafana-operator and the Grafana
+    Foundation SDK are Apache License 2.0. Planned dashboard generation
+    targets the Foundation SDK and grafana-operator custom resources, not
+    the Grafana server itself.
+
+  - Google SRE Workbook (https://sre.google/workbook/alerting-on-slos/)
+    The multiwindow, multi-burn-rate alerting windows and factors Lantern
+    generates are derived from the published SRE Workbook table.
+
+Trademarks referenced in this project are the property of their respective
+owners. Use of these names does not imply endorsement.

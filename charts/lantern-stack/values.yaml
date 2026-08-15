@@ -1,0 +1,109 @@
+# Default posture: BRING YOUR OWN BACKEND.
+#
+# Nothing is installed. The chart renders an ObservabilityStack describing the
+# backends you already run, and deploys a collector that forwards to them.
+# This is what a company with an existing Prometheus and Grafana wants.
+#
+# For an empty cluster, use values-quickstart.yaml instead.
+
+namespace: observability
+
+# ---------------------------------------------------------------------------
+# Backends
+#
+# When the matching subchart is enabled, these are ignored and the in-cluster
+# service addresses are used instead. See templates/_helpers.tpl.
+# ---------------------------------------------------------------------------
+backends:
+  metrics:
+    type: prometheus
+    remoteWrite: ""      # e.g. http://mimir.observability:9009/api/v1/push
+    queryURL: ""         # e.g. http://prometheus.observability:9090
+    operator: prometheus-operator
+    datasource: ""       # Grafana datasource uid, used by P1 dashboards
+    ruleNamespace: ""    # defaults to each service's own namespace
+  traces:
+    type: tempo
+    otlpEndpoint: ""     # e.g. tempo.observability:4317
+    datasource: ""
+  logs:
+    type: loki
+    endpoint: ""         # e.g. http://loki.observability:3100
+    datasource: ""
+  dashboards:
+    type: grafana
+    folderStrategy: per-team
+    instanceRef:
+      name: ""
+      namespace: ""
+    instanceLabels:
+      dashboards: main
+
+# ---------------------------------------------------------------------------
+# Instrumentation
+# ---------------------------------------------------------------------------
+instrumentation:
+  provider: otel-operator   # otel-operator | odigos | none
+  ebpf:
+    # eBPF requires privileged access. It is opt-in, never a default, because
+    # a chart that silently asks for privileged containers is a chart that
+    # gets rejected in review.
+    enabled: false
+    provider: obi
+    privileged: true
+
+# The collector every injected agent exports to. Disable it if you already run
+# one and set backends.traces.otlpEndpoint to its address.
+collector:
+  enabled: true
+  replicas: 2
+  image: otel/opentelemetry-collector-contrib:latest
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+# ---------------------------------------------------------------------------
+# Policy — guardrails developers cannot exceed. The compiler enforces these.
+# ---------------------------------------------------------------------------
+policy:
+  maxSeriesPerService: 25000
+  minSamplingRate: 0.01
+  maxSamplingRate: 1.0
+  # Off by default so `discover | synth` works on a cluster whose workloads
+  # carry no ownership labels yet. Turn it on once teams are labelled.
+  requireTeamLabel: false
+  maxRouteCardinality: 200
+  denyLabels:
+    - user_id
+    - email
+    - session_id
+    - request_id
+
+# ---------------------------------------------------------------------------
+# Defaults applied to any service that declares no SLOs of its own.
+# ---------------------------------------------------------------------------
+defaults:
+  environment: production
+  slo:
+    availability: 99.9
+    latency:
+      objective: 99.0
+      threshold: 500ms
+  retention:
+    traces: 7d
+    metrics: 30d
+
+# ---------------------------------------------------------------------------
+# Subcharts — all off. See values-quickstart.yaml.
+# ---------------------------------------------------------------------------
+opentelemetry-operator:
+  enabled: false
+kube-prometheus-stack:
+  enabled: false
+tempo:
+  enabled: false
+loki:
+  enabled: false
