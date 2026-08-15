@@ -1,0 +1,145 @@
+{{/*
+Defense-in-depth for people who run `helm install` directly instead of
+`make preflight && make install-quickstart`.
+
+HONEST SCOPE: Helm's docs confirm the crds/ directory is installed as part of
+`helm install` itself and is not templated or hook-gated, but do not fully
+specify its ordering relative to pre-install hooks. This hook should NOT be
+treated as a guarantee that it runs before any CRD from this release's
+subcharts is touched. What it verifiably DOES do: run before the Deployments,
+DaemonSets and webhook configurations in this chart are created, which is
+where the actual blast radius lives (a second Grafana, a second Prometheus, a
+colliding webhook). The authoritative, complete check is
+`scripts/preflight-check.sh` — run it first, always. This hook exists for the
+case where someone doesn't.
+
+Only runs when a CRD-owning subchart is actually enabled — there is nothing to
+conflict-check for a pure bring-your-own install.
+*/}}
+{{- if and .Values.preflight.hook.enabled (or (index .Values "kube-prometheus-stack" "enabled") (index .Values "opentelemetry-operator" "enabled")) }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}-preflight
+  namespace: {{ include "lantern.namespace" . }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-preflight
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-preflight
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Name }}-preflight
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-preflight
+    namespace: {{ include "lantern.namespace" . }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-preflight
+  namespace: {{ include "lantern.namespace" . }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+data:
+  check.sh: |
+    #!/bin/sh
+    set -eu
+    RELEASE="{{ .Release.Name }}"
+    NAMESPACE="{{ include "lantern.namespace" . }}"
+    BLOCKED=0
+
+    for crd in \
+      alertmanagers.monitoring.coreos.com prometheuses.monitoring.coreos.com \
+      prometheusrules.monitoring.coreos.com servicemonitors.monitoring.coreos.com \
+      podmonitors.monitoring.coreos.com probes.monitoring.coreos.com \
+      thanosrulers.monitoring.coreos.com \
+      instrumentations.opentelemetry.io opentelemetrycollectors.opentelemetry.io \
+    ; do
+      if ! kubectl get crd "$crd" >/dev/null 2>&1; then
+        continue
+      fi
+      OWNER_NAME=$(kubectl get crd "$crd" -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}' 2>/dev/null || true)
+      OWNER_NS=$(kubectl get crd "$crd" -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-namespace}' 2>/dev/null || true)
+
+      if [ "$OWNER_NAME" = "$RELEASE" ] && [ "$OWNER_NS" = "$NAMESPACE" ]; then
+        echo "ok:    $crd already owned by this release (upgrade)"
+        continue
+      fi
+
+      if [ -z "$OWNER_NAME" ]; then
+        echo "BLOCK: $crd exists and is not Helm-managed. Helm will SKIP it silently rather"
+        echo "       than error, and the controller this release installs will run against"
+        echo "       whatever schema is already there. Run scripts/preflight-check.sh from"
+        echo "       a machine with kubectl access for the full report, or set"
+        echo "       preflight.hook.enabled=false to proceed anyway if this is expected."
+        BLOCKED=1
+      else
+        echo "BLOCK: $crd exists, owned by Helm release '$OWNER_NAME/$OWNER_NS' — not this one."
+        echo "       Disable the owning subchart and point stack.yaml at the existing install."
+        echo "       See docs/adopting-an-existing-cluster.md. Or set preflight.hook.enabled=false"
+        echo "       to proceed anyway if this is expected."
+        BLOCKED=1
+      fi
+    done
+
+    if [ "$BLOCKED" -eq 1 ]; then
+      echo ""
+      echo "Preflight found a CRD conflict. Aborting before any workload is created."
+      exit 1
+    fi
+    echo "Preflight: no CRD ownership conflicts found."
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-preflight
+  namespace: {{ include "lantern.namespace" . }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      serviceAccountName: {{ .Release.Name }}-preflight
+      restartPolicy: Never
+      containers:
+        - name: preflight
+          image: bitnami/kubectl:latest
+          command: ["/bin/sh", "/scripts/check.sh"]
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+      volumes:
+        - name: script
+          configMap:
+            name: {{ .Release.Name }}-preflight
+            defaultMode: 0755
+{{- end }}

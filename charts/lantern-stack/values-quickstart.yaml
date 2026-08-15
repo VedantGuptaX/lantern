@@ -13,6 +13,10 @@
 
 namespace: observability
 
+preflight:
+  hook:
+    enabled: true
+
 instrumentation:
   provider: otel-operator
   ebpf:

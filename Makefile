@@ -43,3 +43,24 @@ chart-check:
 	@helm lint charts/lantern-stack
 	@helm template lantern charts/lantern-stack -f charts/lantern-stack/values-quickstart.yaml >/dev/null
 	@echo "chart OK"
+
+# --- cluster install targets -------------------------------------------
+# preflight is a real prerequisite here, not a suggestion: if
+# scripts/preflight-check.sh exits non-zero, make stops before helm ever runs.
+
+NS ?= observability
+
+preflight:
+	./scripts/preflight-check.sh -n $(NS) -r lantern
+
+install-quickstart: preflight
+	helm dependency update charts/lantern-stack
+	helm lint charts/lantern-stack
+	helm install lantern charts/lantern-stack \
+		-n $(NS) --create-namespace \
+		-f charts/lantern-stack/values-quickstart.yaml
+
+install-byo: preflight
+	helm dependency update charts/lantern-stack
+	helm lint charts/lantern-stack
+	helm install lantern charts/lantern-stack -n $(NS) --create-namespace

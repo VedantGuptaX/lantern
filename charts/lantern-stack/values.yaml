@@ -8,6 +8,14 @@
 
 namespace: observability
 
+# Read-only safety gate, on by default. See scripts/preflight-check.sh for the
+# authoritative version (run before `helm install`, not just inside it) and
+# templates/preflight-hook.yaml for what this in-cluster copy actually covers
+# and does not.
+preflight:
+  hook:
+    enabled: true
+
 # ---------------------------------------------------------------------------
 # Backends
 #

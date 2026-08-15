@@ -32,6 +32,29 @@ If that hasn't been run successfully at least once, don't proceed to Step 1.
 
 Run every check before installing anything. Nothing here is destructive.
 
+**Use the automated gate — don't do this by hand.**
+
+```bash
+make preflight
+```
+
+This runs `scripts/preflight-check.sh`, which does everything below in one
+pass: checks RBAC, checks every Prometheus-Operator/OTel-Operator CRD for an
+existing (and possibly foreign) owner, scans for name-colliding webhooks,
+scans running workloads for existing Grafana/Prometheus/Tempo/Loki images, and
+computes real node headroom against the numbers in the
+[resource requirements table](../README.md#resource-requirements). It exits
+non-zero on anything it classifies as a BLOCK, and `make install-quickstart` /
+`make install-byo` both depend on it — Make will refuse to run `helm install`
+if preflight fails. Run it with `--strict` (`./scripts/preflight-check.sh
+--strict`) to also fail on WARN-level findings if you want zero ambiguity
+before touching a shared cluster.
+
+Treat this as the primary method: run it before Step 2, always. The commands
+below are what it's actually checking under the hood — read them if you want
+to understand a specific finding, run a check manually while debugging, or
+verify something `preflight-check.sh` doesn't cover for your environment:
+
 ```bash
 # Is there already a Prometheus Operator or OTel Operator on this cluster?
 kubectl get crd | grep -E 'monitoring.coreos.com|opentelemetry.io'
@@ -71,6 +94,12 @@ If Step 1 found an existing stack, do **not** run the quickstart values file.
 Write a `stack.yaml` pointing at what's already there (see
 [GETTING_STARTED.md](../GETTING_STARTED.md) Path B), and if OTel Operator is
 the only missing piece:
+
+This custom partial install doesn't go through the `make install-*` targets
+above (those are wired to the two standard values files), so re-run
+`make preflight` (or `./scripts/preflight-check.sh -n observability -r
+lantern`) yourself immediately before this `helm install` — don't assume the
+Step 1 run is still fresh if any time has passed.
 
 ```bash
 helm install lantern charts/lantern-stack \
