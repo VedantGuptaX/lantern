@@ -64,6 +64,7 @@ roleRef:
   kind: ClusterRole
   name: {{ .Release.Name }}-logs-collector
   apiGroup: rbac.authorization.k8s.io
+{{- if (include "lantern.otelCollectorCRDReady" .) }}
 ---
 apiVersion: opentelemetry.io/v1beta1
 kind: OpenTelemetryCollector
@@ -160,4 +161,5 @@ spec:
           receivers: [filelog]
           processors: [memory_limiter, k8sattributes, resource/service_name, attributes/deny, batch]
           exporters: [{{ if (include "lantern.logsEndpoint" .) }}otlphttp/logs{{ else }}debug{{ end }}]
+{{- end }}
 {{- end }}

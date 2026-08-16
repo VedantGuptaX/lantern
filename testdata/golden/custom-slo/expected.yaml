@@ -115,21 +115,21 @@ spec:
     - name: lantern-slo-meta-recordings-settlement-worker-freshness
       rules:
         - record: lantern:objective:ratio
-          expr: 0.99
+          expr: "0.99"
           labels:
             lantern_id: settlement-worker-freshness
             lantern_service: settlement-worker
             lantern_slo: freshness
             team: payments
         - record: lantern:error_budget:ratio
-          expr: 0.01
+          expr: "0.01"
           labels:
             lantern_id: settlement-worker-freshness
             lantern_service: settlement-worker
             lantern_slo: freshness
             team: payments
         - record: lantern:time_period:days
-          expr: 7
+          expr: "7"
           labels:
             lantern_id: settlement-worker-freshness
             lantern_service: settlement-worker

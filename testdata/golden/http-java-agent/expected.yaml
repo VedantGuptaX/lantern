@@ -139,21 +139,21 @@ spec:
     - name: lantern-slo-meta-recordings-checkout-api-availability
       rules:
         - record: lantern:objective:ratio
-          expr: 0.999
+          expr: "0.999"
           labels:
             lantern_id: checkout-api-availability
             lantern_service: checkout-api
             lantern_slo: availability
             team: payments
         - record: lantern:error_budget:ratio
-          expr: 0.001
+          expr: "0.001"
           labels:
             lantern_id: checkout-api-availability
             lantern_service: checkout-api
             lantern_slo: availability
             team: payments
         - record: lantern:time_period:days
-          expr: 30
+          expr: "30"
           labels:
             lantern_id: checkout-api-availability
             lantern_service: checkout-api
@@ -339,21 +339,21 @@ spec:
     - name: lantern-slo-meta-recordings-checkout-api-latency
       rules:
         - record: lantern:objective:ratio
-          expr: 0.99
+          expr: "0.99"
           labels:
             lantern_id: checkout-api-latency
             lantern_service: checkout-api
             lantern_slo: latency
             team: payments
         - record: lantern:error_budget:ratio
-          expr: 0.01
+          expr: "0.01"
           labels:
             lantern_id: checkout-api-latency
             lantern_service: checkout-api
             lantern_slo: latency
             team: payments
         - record: lantern:time_period:days
-          expr: 30
+          expr: "30"
           labels:
             lantern_id: checkout-api-latency
             lantern_service: checkout-api

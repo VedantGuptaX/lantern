@@ -163,6 +163,31 @@ gpuMonitoring:
 # ---------------------------------------------------------------------------
 opentelemetry-operator:
   enabled: false
+  # These two defaults apply whenever this subchart is turned on, quickstart
+  # or a BYO partial install alike — both were found causing real installs
+  # to fail against a live cluster with no cert-manager on it.
+  admissionWebhooks:
+    certManager:
+      # The chart's own default is true, which requires cert-manager to
+      # already be running on the cluster for the webhook's TLS cert. Most
+      # clusters adopting Lantern for the first time don't have cert-manager
+      # installed (this one didn't) and installing it too is a whole
+      # separate operator/CRD footprint just to get a webhook cert. false
+      # falls through to the chart's own autoGenerateCert path below instead.
+      enabled: false
+    autoGenerateCert:
+      enabled: true
+      # The chart's own default is true, which regenerates a brand-new
+      # self-signed CA/cert on every `helm upgrade` — but nothing in the
+      # chart restarts the already-running operator pod to pick up the new
+      # cert, so the pod keeps serving the old one while the webhook
+      # configs now trust the new CA. Found on a real `helm upgrade`
+      # immediately after a clean install: "certificate signed by unknown
+      # authority" on the very next apply, for every apply after that,
+      # forever. false makes the chart look up and reuse any existing
+      # secret instead (see the upstream chart's genCert helper), so the
+      # cert only gets generated once, on first install.
+      recreate: false
 kube-prometheus-stack:
   enabled: false
 tempo:

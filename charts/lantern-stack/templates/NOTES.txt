@@ -28,6 +28,21 @@ Resolved backends:
   traces OTLP          {{ include "lantern.tracesEndpoint" . | default "(NOT SET — set backends.traces.otlpEndpoint)" }}
   logs                 {{ include "lantern.logsEndpoint" . | default "(NOT SET — set backends.logs.endpoint)" }}
   collector            {{ include "lantern.collectorEndpoint" . | default "(disabled)" }}
+{{ if and (or .Values.collector.enabled .Values.logsCollector.enabled) (not (include "lantern.otelCollectorCRDReady" .)) -}}
+NOTE: the OpenTelemetryCollector CRD wasn't registered yet at the start of
+this install, so the collector/logs-collector custom resources above were
+skipped rather than failing the whole release (a genuinely fresh cluster
+always hits this on the very first install — see
+lantern.otelCollectorCRDReady in _helpers.tpl for why). Run this exact
+command again — `helm upgrade` with the same flags you just used — and they
+will be created now that the CRD exists:
+
+     helm upgrade {{ .Release.Name }} charts/lantern-stack -n {{ include "lantern.namespace" . }} <same -f/--set flags as this install>
+
+`make install-quickstart` / `make install-byo` already do this follow-up
+upgrade automatically — this note only matters if you ran `helm install`
+directly.
+{{ end -}}
 
 Next steps
 ──────────
@@ -56,9 +71,12 @@ Next steps
      kubectl port-forward -n {{ include "lantern.namespace" . }} svc/{{ .Release.Name }}-grafana 3000:80
 
    You will find the cluster and node dashboards that kube-prometheus-stack
-   ships, and the SLO burn-rate alerts Lantern generated under Alerting.
+   ships, a per-service Lantern dashboard for each ServiceObservability
+   (burn-rate + error-budget panels, plus Logs and Traces panels that report
+   why they're empty if their datasource isn't wired up), and the SLO
+   burn-rate alerts Lantern generated under Alerting.
 
-   NOTE: per-service Lantern dashboards are NOT generated yet — that is P1.
-   Until then, Lantern produces instrumentation, scrape config and alerts;
-   the dashboards you see are the ones kube-prometheus-stack provides.
+   Per-service dashboards need target.metricsPort set correctly (or a real
+   named "metrics" port on the target Service) before their panels show
+   real data — see the REVIEW markers services.yaml gives you in step 3.
 {{- end }}

@@ -53,14 +53,29 @@ NS ?= observability
 preflight:
 	./scripts/preflight-check.sh -n $(NS) -r lantern
 
+# The OpenTelemetryCollector CRD (kube-prometheus-stack's CRDs are fine —
+# they live in the chart's crds/ directory, which Helm guarantees runs before
+# anything else) ships as a regular template in the opentelemetry-operator
+# subchart, not Helm's special crds/ directory. On a genuinely fresh cluster
+# that CRD doesn't exist yet when `helm install` first runs, so the chart
+# skips creating collector.yaml/logs-collector.yaml's OpenTelemetryCollector
+# resources rather than failing the release (see
+# lantern.otelCollectorCRDReady in _helpers.tpl). The second `helm upgrade`
+# with the identical flags picks them up now that the CRD is registered —
+# always safe to run, a no-op everywhere else. Found on a real first-ever
+# install against an empty cluster, not a hypothetical.
 install-quickstart: preflight
 	helm dependency update charts/lantern-stack
 	helm lint charts/lantern-stack
 	helm install lantern charts/lantern-stack \
 		-n $(NS) --create-namespace \
 		-f charts/lantern-stack/values-quickstart.yaml
+	helm upgrade lantern charts/lantern-stack \
+		-n $(NS) \
+		-f charts/lantern-stack/values-quickstart.yaml
 
 install-byo: preflight
 	helm dependency update charts/lantern-stack
 	helm lint charts/lantern-stack
 	helm install lantern charts/lantern-stack -n $(NS) --create-namespace
+	helm upgrade lantern charts/lantern-stack -n $(NS)

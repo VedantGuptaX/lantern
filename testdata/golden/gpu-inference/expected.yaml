@@ -143,21 +143,21 @@ spec:
     - name: lantern-slo-meta-recordings-llama-70b-server-ttft
       rules:
         - record: lantern:objective:ratio
-          expr: 0.99
+          expr: "0.99"
           labels:
             lantern_id: llama-70b-server-ttft
             lantern_service: llama-70b-server
             lantern_slo: ttft
             team: ml-platform
         - record: lantern:error_budget:ratio
-          expr: 0.01
+          expr: "0.01"
           labels:
             lantern_id: llama-70b-server-ttft
             lantern_service: llama-70b-server
             lantern_slo: ttft
             team: ml-platform
         - record: lantern:time_period:days
-          expr: 7
+          expr: "7"
           labels:
             lantern_id: llama-70b-server-ttft
             lantern_service: llama-70b-server
@@ -343,21 +343,21 @@ spec:
     - name: lantern-slo-meta-recordings-llama-70b-server-inter-token-latency
       rules:
         - record: lantern:objective:ratio
-          expr: 0.99
+          expr: "0.99"
           labels:
             lantern_id: llama-70b-server-inter-token-latency
             lantern_service: llama-70b-server
             lantern_slo: inter-token-latency
             team: ml-platform
         - record: lantern:error_budget:ratio
-          expr: 0.01
+          expr: "0.01"
           labels:
             lantern_id: llama-70b-server-inter-token-latency
             lantern_service: llama-70b-server
             lantern_slo: inter-token-latency
             team: ml-platform
         - record: lantern:time_period:days
-          expr: 7
+          expr: "7"
           labels:
             lantern_id: llama-70b-server-inter-token-latency
             lantern_service: llama-70b-server
@@ -515,21 +515,21 @@ spec:
     - name: lantern-slo-meta-recordings-llama-70b-server-queue-depth
       rules:
         - record: lantern:objective:ratio
-          expr: 0.99
+          expr: "0.99"
           labels:
             lantern_id: llama-70b-server-queue-depth
             lantern_service: llama-70b-server
             lantern_slo: queue-depth
             team: ml-platform
         - record: lantern:error_budget:ratio
-          expr: 0.01
+          expr: "0.01"
           labels:
             lantern_id: llama-70b-server-queue-depth
             lantern_service: llama-70b-server
             lantern_slo: queue-depth
             team: ml-platform
         - record: lantern:time_period:days
-          expr: 7
+          expr: "7"
           labels:
             lantern_id: llama-70b-server-queue-depth
             lantern_service: llama-70b-server

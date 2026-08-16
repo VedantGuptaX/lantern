@@ -116,21 +116,21 @@ spec:
     - name: lantern-slo-meta-recordings-pricing-svc-availability
       rules:
         - record: lantern:objective:ratio
-          expr: 0.995
+          expr: "0.995"
           labels:
             lantern_id: pricing-svc-availability
             lantern_service: pricing-svc
             lantern_slo: availability
             team: pricing
         - record: lantern:error_budget:ratio
-          expr: 0.005
+          expr: "0.005"
           labels:
             lantern_id: pricing-svc-availability
             lantern_service: pricing-svc
             lantern_slo: availability
             team: pricing
         - record: lantern:time_period:days
-          expr: 30
+          expr: "30"
           labels:
             lantern_id: pricing-svc-availability
             lantern_service: pricing-svc
