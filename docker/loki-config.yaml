@@ -1,0 +1,39 @@
+# Minimal single-process Loki config: filesystem storage, no object store,
+# no clustering. Same shape as the SingleBinary mode used in
+# charts/lantern-stack's Kubernetes quickstart (schema/store choices carried
+# over directly from that real, verified config) -- correct for local/dev
+# use, not for anything you'd run in production or want durable long-term.
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  allow_structured_metadata: true
+  # 7 days. This is a filesystem-backed single instance with no retention
+  # enforcement job running by default -- treat this as "logs eventually
+  # rotate out of the container volume," not a real retention guarantee.
+  retention_period: 168h

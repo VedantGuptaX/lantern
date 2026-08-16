@@ -353,6 +353,16 @@ No external Go modules — the whole thing builds with the standard library. Go
 
 Full walkthrough: **[GETTING_STARTED.md](GETTING_STARTED.md)**
 
+### Not on Kubernetes?
+
+The compiler itself — `discover`/`synth`, the object model, everything
+above — is Kubernetes-only by design (see [DESIGN.md](DESIGN.md)); that's
+not changing. But if you just want to see plain Docker/Docker Compose
+container logs in Grafana without any of that, **[docker/](docker/)** is a
+separate, standalone Loki + Grafana stack — logs only, no metrics/traces,
+zero relationship to the compiler or `charts/lantern-stack`. See
+[docker/README.md](docker/README.md).
+
 ## Setting this up with an AI coding agent
 
 If you're using Cursor, Claude Code, or another AI coding agent to help set

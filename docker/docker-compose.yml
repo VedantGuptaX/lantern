@@ -1,0 +1,42 @@
+# Standalone log stack for plain Docker/Docker Compose -- no Kubernetes
+# involved, and this file has zero relationship to Lantern's Go compiler or
+# charts/lantern-stack. It exists for the same reason that chart does: an
+# opt-in, demo-scale convenience for people who don't already run something
+# to send logs to. See docker/README.md before running this -- there are two
+# manual steps (installing a Docker plugin, and adding a `logging:` block to
+# your OWN services) that this file alone doesn't do for you.
+#
+# Metrics and traces are intentionally out of scope here. This is logs only.
+
+services:
+  loki:
+    image: grafana/loki:3.3.2
+    container_name: lantern-loki
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: lantern-grafana
+    depends_on:
+      - loki
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=lantern
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+volumes:
+  loki-data:
+  grafana-data:

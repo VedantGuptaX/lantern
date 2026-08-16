@@ -1,0 +1,60 @@
+{
+  "title": "Docker: Container Logs",
+  "uid": "lantern-docker-logs",
+  "tags": ["lantern", "docker", "logs"],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "container",
+        "type": "query",
+        "label": "Container",
+        "datasource": { "type": "loki", "uid": "loki" },
+        "query": "label_values(container_name)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": false,
+        "includeAll": false,
+        "current": {}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "Log volume — $container",
+      "description": "Line rate for the selected container. A sudden drop to zero with the container still running usually means it stopped writing to stdout/stderr, not that it's actually quiet.",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [{
+        "expr": "sum(count_over_time({container_name=\"$container\"}[1m]))",
+        "legendFormat": "lines/min", "refId": "A"
+      }],
+      "fieldConfig": { "defaults": {
+        "custom": { "drawStyle": "bars", "fillOpacity": 30 },
+        "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }
+      }, "overrides": [] },
+      "options": { "legend": { "displayMode": "hidden" }, "tooltip": { "mode": "single" } }
+    },
+    {
+      "id": 2, "type": "logs", "title": "Logs — $container",
+      "gridPos": { "h": 20, "w": 24, "x": 0, "y": 6 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [{
+        "expr": "{container_name=\"$container\"}",
+        "refId": "A"
+      }],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      }
+    }
+  ],
+  "schemaVersion": 39
+}
