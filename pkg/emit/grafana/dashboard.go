@@ -462,7 +462,7 @@ func getAtPointer(doc any, ptr pointer) (any, error) {
 			}
 			cur = v
 		case []any:
-			idx, err := arrayIndex(seg, len(node))
+			idx, err := arrayIndex(seg, len(node), false)
 			if err != nil {
 				return nil, err
 			}
@@ -521,7 +521,13 @@ func setRecursive(node any, ptr pointer, value any, insert bool) (any, error) {
 			}
 			return append(n, value), nil
 		}
-		idx, err := arrayIndex(seg, len(n))
+		// RFC 6902 §4.1: for "add", the target index may equal the array's
+		// current length — that means "append", the same as the "-" marker
+		// above. It's only legal one level down from here (i.e. this is the
+		// final segment and we're inserting), not for a plain replace or for
+		// descending further into the array.
+		allowEqualLength := insert && len(rest) == 0
+		idx, err := arrayIndex(seg, len(n), allowEqualLength)
 		if err != nil {
 			return nil, err
 		}
@@ -579,7 +585,7 @@ func removeRecursive(node any, ptr pointer) (any, error) {
 		return n, nil
 
 	case []any:
-		idx, err := arrayIndex(seg, len(n))
+		idx, err := arrayIndex(seg, len(n), false)
 		if err != nil {
 			return nil, err
 		}
@@ -598,12 +604,21 @@ func removeRecursive(node any, ptr pointer) (any, error) {
 	}
 }
 
-func arrayIndex(seg string, length int) (int, error) {
+// arrayIndex parses seg as a non-negative array index. allowEqualLength
+// permits idx == length (RFC 6902 §4.1: an "add" target index equal to the
+// array's current length means append, same as the "-" marker) — callers
+// doing a get/replace/remove must pass false, since indexing past the last
+// element is never valid for those.
+func arrayIndex(seg string, length int, allowEqualLength bool) (int, error) {
 	var idx int
 	if _, err := fmt.Sscanf(seg, "%d", &idx); err != nil {
 		return 0, fmt.Errorf("array index %q is not a number", seg)
 	}
-	if idx < 0 || idx >= length {
+	max := length
+	if allowEqualLength {
+		max = length + 1
+	}
+	if idx < 0 || idx >= max {
 		return 0, fmt.Errorf("array index %d out of range (length %d)", idx, length)
 	}
 	return idx, nil

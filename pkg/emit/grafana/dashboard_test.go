@@ -191,6 +191,38 @@ func TestApplyPatchAddReplaceRemove(t *testing.T) {
 	}
 }
 
+func TestApplyPatchAddAtNumericIndexEqualToArrayLength(t *testing.T) {
+	// RFC 6902 §4.1: an "add" target index equal to the array's current
+	// length means append — the same as the "-" marker. Regression test for
+	// a bug found on the real UAT bastion (round 3): arrayIndex rejected
+	// idx == length unconditionally, so a literal numeric index (rather than
+	// "-") could never be used to append.
+	doc, _ := toGenericJSON(map[string]any{"tags": []any{"a", "b"}})
+
+	doc, err := applyPatch(doc, api.Patch{Op: "add", Path: "/tags/2", Value: "c"})
+	if err != nil {
+		t.Fatalf("add at index == length should succeed (RFC 6902 append semantics): %v", err)
+	}
+	tags := doc.(map[string]any)["tags"].([]any)
+	if len(tags) != 3 || tags[2] != "c" {
+		t.Errorf("tags = %v, want [a b c]", tags)
+	}
+
+	// One past the length is still invalid — only == length is legal.
+	if _, err := applyPatch(doc, api.Patch{Op: "add", Path: "/tags/10", Value: "d"}); err == nil {
+		t.Error("add at an index beyond length+1 should still error")
+	}
+
+	// replace/remove must NOT gain the same == length leniency: there is no
+	// element at that index to replace or remove.
+	if _, err := applyPatch(doc, api.Patch{Op: "replace", Path: "/tags/3", Value: "x"}); err == nil {
+		t.Error("replace at index == length should still error — nothing exists there")
+	}
+	if _, err := applyPatch(doc, api.Patch{Op: "remove", Path: "/tags/3"}); err == nil {
+		t.Error("remove at index == length should still error — nothing exists there")
+	}
+}
+
 func TestApplyPatchTest(t *testing.T) {
 	doc, _ := toGenericJSON(map[string]any{"title": "orig"})
 
