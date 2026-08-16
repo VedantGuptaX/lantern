@@ -200,20 +200,46 @@ that's also true of the GPU/inference metric-name override above.
 
 ## Resource requirements
 
-Estimated from the chart's own component defaults, not yet measured against a
-real install — see [scripts/verify-kind.sh](scripts/verify-kind.sh) and update
-this table with real `kubectl top` numbers once someone runs it.
+**Measured for real** — a 2-node AKS cluster (`Standard_D2s_v3`, 2 vCPU/8Gi
+each), `kubectl describe nodes` before and after each component, not
+estimated from chart defaults. Every subchart this project depends on
+(kube-prometheus-stack, Loki, Tempo, the OTel Operator) ships with **zero**
+default resource requests — "size it yourself" is the norm across this whole
+ecosystem, not a Lantern-specific gap. The numbers below are what this
+project's own values files now set explicitly, so `make install-quickstart`
+doesn't hand you an unbounded footprint.
+
+| Component | CPU request | Mem request | Notes |
+|---|---|---|---|
+| kube-prometheus-stack core (Prometheus, Alertmanager, Grafana, kube-state-metrics, the operator itself) | ~245m | ~592Mi | Single-scheduled, not per-node |
+| OTel Operator | ~30m | ~64Mi | Single-scheduled |
+| Lantern's own OTel Collector | ~100m | ~256Mi | Single-scheduled |
+| Loki (`SingleBinary`, gateway/caches off) | ~30m | ~128Mi | Single-scheduled |
+| Tempo | ~30m | ~128Mi | Single-scheduled |
+| node-exporter | ~10m | ~24Mi | DaemonSet — **per node** |
+| `logsCollector` (pod-log shipping) | ~50m | ~256Mi | DaemonSet — **per node** |
+| `loki-canary` | ~10m | ~24Mi | DaemonSet — **per node**, required by Loki's own `helm test` hook |
+| OBI (eBPF trace probe, bring-your-own — see [docs](docs/getting-signals-into-grafana.md)) | ~10m | ~256Mi | DaemonSet — **per node**; memory, not CPU, is what it actually needs |
+
+Add up the "single-scheduled" rows once, and the "per node" rows once per
+node in your pool. On the 2-node cluster this was measured on: **~595m CPU /
+~2.3Gi RAM combined** for the complete stack — metrics, logs, and traces
+together, dashboards included.
 
 | Mode | Free cluster capacity needed |
 |---|---|
-| **Bring your own backend** | ~0.3 vCPU / 0.5Gi RAM — just the OTel Operator and collector. Whatever your existing Prometheus/Grafana already needs is separate. |
-| **Quickstart, minimum** | ~1.5 vCPU / 2.5Gi RAM free, **plus ~50m CPU / 50Mi RAM per node** for node-exporter (it's a DaemonSet). Expect tight — pods may throttle under load. |
-| **Quickstart, recommended** | ~4 vCPU / 8Gi RAM free. This is what [GETTING_STARTED.md](GETTING_STARTED.md) and `verify-kind.sh` check for. |
+| **Bring your own backend** | ~0.3 vCPU / 0.5Gi RAM — just the OTel Operator and collector. Whatever your existing Prometheus/Grafana already needs is separate. Not yet measured as precisely as the quickstart path above. |
+| **Quickstart, metrics + dashboards only** (no logs, no traces) | ~435m vCPU / ~1.2Gi RAM combined, from the table above minus the logs/traces/OBI rows. |
+| **Quickstart, full stack** (metrics + logs + traces) | ~595m vCPU / ~2.3Gi RAM combined, measured as above. This is tighter than the old "~1.5 vCPU / 2.5Gi" estimate suggested — that number was never wrong, it was just for a much smaller slice of what the quickstart now includes. |
 | **Storage** | ~10–20Gi of PVC if you enable persistent storage for Loki/Tempo. The quickstart defaults to ephemeral filesystem storage — no PVC, but log/trace data is lost on pod restart. Fine for evaluation, not for anything you'd want to keep. |
 | **GPU / DCGM monitoring** | ~0 additional — `gpuMonitoring.enabled` only adds a `ServiceMonitor` and a `PrometheusRule` (two Kubernetes objects, not a workload). It assumes `dcgm-exporter` is already running via the NVIDIA GPU Operator; that DaemonSet's own resource footprint is separate infrastructure Lantern doesn't install or size for you. |
 
 `./scripts/preflight-check.sh` computes your cluster's actual free capacity
-against these numbers before you install anything.
+against these numbers before you install anything. On a genuinely tight
+cluster (this one had well under 200m CPU free across both nodes combined
+by the time the full stack went in), expect to actually hit that math, not
+just clear it comfortably — plan accordingly rather than assuming "quickstart"
+means "always fits."
 
 ## Not installing this blind — the preflight check
 
@@ -269,28 +295,31 @@ Full walkthrough: **[GETTING_STARTED.md](GETTING_STARTED.md)**
 
 ## Project status
 
-Alpha, actively developed. This table is deliberately narrow — it only lists
-what's actually built and tested in the code today. Everything still ahead
-(per-team dashboard folders, the operator, SDKs, and why they're prioritized
-that way) is tracked separately in **[plan.md](plan.md)**, so this README
-doesn't drift into a wishlist.
+Alpha, but **verified end-to-end on a real, populated AKS cluster** — not
+just synthetic `kind` fixtures. Metrics, logs, traces, and generated
+dashboards all confirmed working with real data, from a real multi-service
+deployment, real capacity constraints included. This table is deliberately
+narrow — it only lists what's actually built and tested in the code today.
+Everything still ahead (per-team dashboard folders, the operator, SDKs, and
+why they're prioritized that way) is tracked separately in
+**[plan.md](plan.md)**, so this README doesn't drift into a wishlist.
 
 | | Status |
 |---|---|
 | Compiler core and CLI | ✅ Done |
 | OpenTelemetry agent injection | ✅ Done |
-| eBPF / agent auto-selection | ✅ Done — selects the mode; does **not** install the eBPF probe itself, see [docs](docs/getting-signals-into-grafana.md) |
-| Prometheus scrape config | ✅ Done |
-| SLO burn-rate alerts | ✅ Done |
-| Workload discovery (`lantern discover`) | ✅ Done |
+| eBPF / agent auto-selection | ✅ Done — selects the mode; does **not** install the eBPF probe itself. Bring-your-own path (OBI) verified end-to-end on a real cluster, real gotchas documented — see [docs](docs/getting-signals-into-grafana.md) |
+| Prometheus scrape config | ✅ Done — real bug found and fixed installing on a live cluster: a `ServiceMonitor` could reference a named port that doesn't exist on the target `Service` with no warning; now caught at `-strict` time |
+| SLO burn-rate alerts | ✅ Done — real bug found and fixed on a live cluster: numeric SLO constants (objective, error budget) could serialize as bare YAML numbers instead of quoted strings, which the live `PrometheusRule` CRD schema rejects outright; now emits correctly and verified loading with `health: ok` against a real Prometheus |
+| Workload discovery (`lantern discover`) | ✅ Done — real bug found and fixed against real `kubectl get -A -o yaml` output: the YAML parser rejected valid line-folded scalars that only show up in aged, real-cluster workloads, never in fixtures |
 | GPU node health (DCGM) | ✅ Done — cluster-level, via the `gpuMonitoring` chart toggle |
 | GPU inference-server SLOs (ttft, inter-token latency, queue depth) | ✅ Done — `serviceKind: inference`, see [docs](docs/gpu-and-inference-observability.md) |
-| Preflight safety gate | ✅ Done — `make preflight`, gates `make install-*`, plus an in-cluster hook |
+| Preflight safety gate | ✅ Done — `make preflight`, gates `make install-*`, plus an in-cluster hook. Real bug found and fixed: the in-cluster hook's CRD-ownership check would block every genuinely fresh install (it couldn't tell "this release's own brand-new CRD" from "a foreign one") — now checks for actual custom-resource instances, not just an ownership annotation Helm never sets for `crds/`-folder CRDs |
 | System metrics | ✅ Via kube-prometheus-stack, not generated by Lantern |
-| Traces | ⚠️ Collector accepts them; nothing sends them for `mode: ebpf` until you install a probe yourself — see [docs](docs/getting-signals-into-grafana.md) |
-| Log collection (pod logs → Loki) | ✅ Done — `logsCollector.enabled`, a DaemonSet collector; off by default, on in the quickstart, see [docs](docs/getting-signals-into-grafana.md) |
-| Per-service Grafana dashboards | ✅ Done — generated from the same recording rules that drive alerts; no per-team folders yet, see [docs](docs/getting-signals-into-grafana.md) |
-| Quickstart Helm chart | ⚠️ `helm template`/`helm lint` verified against a real cluster; **`helm install` still never run** — see [verify-kind.sh](scripts/verify-kind.sh) |
+| Traces | ✅ Verified end-to-end on a real cluster — Tempo + OBI (bring-your-own eBPF probe) → collector → Tempo → Grafana, confirmed with real trace data from a real service. See [docs](docs/getting-signals-into-grafana.md) for the exact gotchas (memory sizing, the `bpffs` hostPath mount, `privileged` vs. narrowed capabilities) |
+| Log collection (pod logs → Loki) | ✅ Done, verified end-to-end on a real cluster — `logsCollector.enabled`, a DaemonSet collector; off by default, on in the quickstart. Two real bugs found and fixed: undersized memory limit silently dropped log batches for any service verbose enough to log full SQL query text, and `start_at: beginning` meant every restart of the collector replayed the entire node's log history (including every system pod), overwhelming Loki's own ingestion limits and starving out real, current traffic behind the backlog. See [docs](docs/getting-signals-into-grafana.md) |
+| Per-service Grafana dashboards | ✅ Done, verified rendering real data on a real cluster — generated from the same recording rules that drive alerts; no per-team folders yet, see [docs](docs/getting-signals-into-grafana.md) |
+| Quickstart Helm chart | ✅ `helm install`/`helm upgrade` now run and verified repeatedly against a real AKS cluster, not just `helm template`/`helm lint`. Several real install-time bugs found and fixed along the way: Loki's chart needing an explicit `deploymentMode`, an assumed cert-manager dependency that doesn't hold on a cluster without it, a CRD/cert install-ordering deadlock between the OTel Operator's self-signed cert and Helm's own apply ordering, and a Tempo receiver/datasource-port mismatch. `verify-kind.sh` (the local `kind`-based rehearsal) still hasn't been run in any environment that had `kind`/Docker available — real-cluster verification happened instead, which is a stronger check but not a substitute if you specifically want the throwaway-cluster rehearsal documented in [CONTRIBUTING.md](CONTRIBUTING.md) |
 
 ## Contributing
 
@@ -308,11 +337,19 @@ make golden   # re-baseline golden files after an intended change
 ./scripts/verify-kind.sh   # full end-to-end on a throwaway kind cluster
 ```
 
-`verify-kind.sh` is the one that matters: it exercises everything the project
-claims but has never executed — chart dependency resolution, `helm lint`, a
-real install, discovery against a live cluster, and applying generated
-manifests. It writes `verify-report.txt`. **Nobody has run it yet.** If you do,
-the report is the most useful thing you could open an issue with.
+`verify-kind.sh` exercises the same ground the project now has real-cluster
+evidence for — chart dependency resolution, `helm lint`, a real install,
+discovery against a live cluster, and applying generated manifests — but on
+a disposable local `kind` cluster instead of a shared one. It writes
+`verify-report.txt`. It still hasn't been run in any environment that had
+`kind`/Docker available; real-cluster verification against a live AKS
+cluster happened instead (see [Project status](#project-status) — every row
+marked verified-on-a-real-cluster came from that, not from `kind`). That's
+a stronger check in the ways that matter (real traffic, real capacity
+pressure, real multi-namespace RBAC) but not a substitute for the fast,
+disposable, no-blast-radius loop `verify-kind.sh` is meant to give
+contributors. If you have `kind`/Docker locally and run it, the report is
+still one of the most useful things you could open an issue with.
 
 ## License
 

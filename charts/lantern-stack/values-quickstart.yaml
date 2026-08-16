@@ -107,7 +107,13 @@ kube-prometheus-stack:
       - name: Tempo
         type: tempo
         uid: tempo-main
-        url: http://lantern-tempo.observability:3100
+        # Was :3100 -- Loki's port, not Tempo's. Copy-paste bug from the
+        # Loki entry right below this one: Tempo's actual HTTP query-
+        # frontend port is 3200 (server.http_listen_port in the tempo
+        # subchart's own config). Found because Grafana's datasource proxy
+        # returned a flat 502 for every Tempo query -- nothing else in the
+        # chain was broken, this URL just pointed nowhere real.
+        url: http://lantern-tempo.observability:3200
         access: proxy
       - name: Loki
         type: loki
@@ -117,14 +123,88 @@ kube-prometheus-stack:
 
 tempo:
   enabled: true
+  # The tempo.tempo.receivers override below (otlp only) looks like it
+  # should be enough, but Helm values merging can't delete a key -- the
+  # subchart's own default receivers map still has `opencensus:` (present,
+  # null/default config), and a values override can only add/overwrite
+  # keys, never remove one. Tempo v2.9.3 (the image this chart pins)
+  # dropped the OpenCensus receiver years ago (deprecated, folded into
+  # OpenTelemetry), so it refuses to start at all: "'receivers' unknown
+  # type: \"opencensus\"" -- found on a real cluster, every single time,
+  # not a hypothetical. The only reliable fix is overriding the whole
+  # templated `config` string with receivers hardcoded to exclude it;
+  # everything else below is copied verbatim from the tempo subchart's own
+  # default `config` (same tpl-evaluated .Values references), so it still
+  # responds correctly to every other tempo.tempo.* value.
+  config: |
+    stream_over_http_enabled: {{ .Values.tempo.streamOverHttpEnabled }}
+    memberlist:
+      cluster_label: "{{ .Release.Name }}.{{ .Release.Namespace }}"
+    multitenancy_enabled: {{ .Values.tempo.multitenancyEnabled }}
+    usage_report:
+      reporting_enabled: {{ .Values.tempo.reportingEnabled }}
+    compactor:
+      compaction:
+        block_retention: {{ .Values.tempo.retention }}
+    distributor:
+      receivers:
+        jaeger:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:14250
+            thrift_binary:
+              endpoint: 0.0.0.0:6832
+            thrift_compact:
+              endpoint: 0.0.0.0:6831
+            thrift_http:
+              endpoint: 0.0.0.0:14268
+        otlp:
+          protocols:
+            grpc:
+              endpoint: "0.0.0.0:4317"
+            http:
+              endpoint: "0.0.0.0:4318"
+    ingester:
+      {{- toYaml .Values.tempo.ingester | nindent 6 }}
+    server:
+      {{- toYaml .Values.tempo.server | nindent 6 }}
+    storage:
+      {{- toYaml .Values.tempo.storage | nindent 6 }}
+    querier:
+      {{- toYaml .Values.tempo.querier | nindent 6 }}
+    query_frontend:
+      {{- toYaml .Values.tempo.queryFrontend | nindent 6 }}
+    overrides:
+      {{- toYaml .Values.tempo.overrides | nindent 6 }}
+      {{- if .Values.tempo.metricsGenerator.enabled }}
+    metrics_generator:
+      {{- if .Values.tempo.metricsGenerator.processor }}
+      processor:
+        {{- toYaml .Values.tempo.metricsGenerator.processor | nindent 8 }}
+      {{- end }}
+      {{- if .Values.tempo.metricsGenerator.registry }}
+      registry:
+        {{- toYaml .Values.tempo.metricsGenerator.registry | nindent 8 }}
+      {{- end }}
+      storage:
+        path: {{ .Values.tempo.metricsGenerator.storage.path | quote }}
+        {{- if .Values.tempo.metricsGenerator.storage.remote_write }}
+        remote_write:
+          {{- toYaml .Values.tempo.metricsGenerator.storage.remote_write | nindent 10 }}
+        {{- else }}
+        remote_write:
+          - url: {{ .Values.tempo.metricsGenerator.remoteWriteUrl }}
+        {{- end }}
+      traces_storage:
+        path: {{ .Values.tempo.metricsGenerator.traces_storage.path | quote }}
+      {{- end }}
   tempo:
-    receivers:
-      otlp:
-        protocols:
-          grpc:
-            endpoint: 0.0.0.0:4317
-          http:
-            endpoint: 0.0.0.0:4318
+    resources:
+      requests:
+        cpu: 30m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
 
 loki:
   enabled: true

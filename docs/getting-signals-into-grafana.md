@@ -82,6 +82,67 @@ to happen:
    This needs privileged/kernel access; treat it with the same caution
    `instrumentation.ebpf.privileged: true` already signals in this chart's
    values.
+
+   **Verified end-to-end on a real cluster** (not a hypothetical — traces
+   confirmed reaching Tempo and rendering in Grafana). Four real gotchas hit
+   along the way, none obvious from OBI's own default values:
+
+   ```bash
+   helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
+   helm install obi open-telemetry/opentelemetry-ebpf-instrumentation \
+     -n observability \
+     --set privileged=true \
+     --set resources.requests.cpu=10m \
+     --set resources.requests.memory=256Mi \
+     --set resources.limits.memory=512Mi \
+     --set config.data.otel_traces_export.endpoint="http://<release>-collector.<namespace>.svc:4317" \
+     --set-json 'config.data.discovery.instrument=[{"k8s_namespace":"your-app-namespace"}]' \
+     --set-json 'volumes=[{"name":"bpffs","hostPath":{"path":"/sys/fs/bpf","type":"DirectoryOrCreate"}}]' \
+     --set-json 'volumeMounts=[{"name":"bpffs","mountPath":"/sys/fs/bpf"}]'
+   ```
+
+   - **Memory, not CPU, is what OBI actually needs.** The chart ships with
+     zero default resources (same "you decide" pattern as every subchart
+     this project depends on). A too-small memory limit doesn't fail
+     loudly — the pod stays `Running`, but the eBPF tracer silently gives
+     up per-process: `"couldn't load tracer ... map create: cannot
+     allocate memory"`, and that process's traces just never appear
+     anywhere. 256Mi/512Mi was enough in practice; size up if you're
+     tracing many processes per node.
+   - **`/sys/fs/bpf` needs a real hostPath mount.** Without it, OBI starts
+     clean and even traces *some* things (DNS-level probes worked), but
+     HTTP/gRPC tracing — which needs pinned eBPF maps to correlate
+     multi-packet request/response state — silently produces nothing.
+     The warning in the logs is easy to miss: `"creating OTEL namespace in
+     bpffs failed (is bpffs mounted?)"`, followed by `"OBI will still
+     work, but features depending on pinned maps... will be disabled"` —
+     which undersells it; basic tracing depends on this too, not just the
+     optional log-enricher/profile-correlation features the message names.
+   - **`privileged: true` was needed in practice.** The chart's narrower
+     mode (`privileged: false` + `extraCapabilities`) is real and worth
+     trying first on a cluster where minimizing privilege matters more —
+     but even after adding every capability the values.yaml comments
+     suggested (`BPF`, `SYS_PTRACE`, `NET_RAW`, `SYS_ADMIN`), HTTP tracing
+     still failed with `"error running iterator in netns: join target ns:
+     operation not permitted"`. Full `privileged: true` (the chart's own
+     default) resolved it immediately. If your cluster already runs a CNI
+     with comparably privileged node agents (Calico, Cilium, Azure CNI),
+     this isn't a new category of exposure — just know it's not the
+     minimal-privilege path.
+   - **`contextPropagation.enabled` (default `true`) pulls in
+     `hostNetwork: true`.** That's a real, separate blast-radius increase
+     from `privileged: true` — sharing the node's network namespace, not
+     just kernel capabilities — and it's only needed to correlate spans
+     *across* service-to-service calls into one connected trace. Setting
+     `contextPropagation.enabled: false` avoids `hostNetwork` entirely and
+     still produces real, useful per-service traces; you lose cross-service
+     correlation, not tracing itself. Worth the tradeoff on most clusters.
+   - Scope `config.data.discovery.instrument` to your actual app
+     namespace(s) (`k8s_namespace: your-app-namespace`, repeatable). OBI's
+     default tries to instrument every process on the node — system pods
+     included — which burns CPU/memory budget on tracing calico, coredns,
+     etc. that you almost certainly don't want traces for anyway.
+
 2. Or: force `mode: agent`/`mode: sdk` for that service instead
    (`spec.instrumentation.mode` in its `ServiceObservability`), if an SDK
    agent exists for its runtime and eBPF's shallower span coverage isn't
