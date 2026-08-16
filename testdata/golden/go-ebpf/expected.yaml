@@ -206,3 +206,153 @@ spec:
             summary: pricing-svc is burning its availability error budget too fast
             description: "SLO \"availability\" (objective 99.5% over 30d) is consuming error budget at a rate that exhausts it before the window ends. Burn-rate windows: 2h/1d at 3x, 6h/3d at 1x."
             runbook_url: https://runbooks.internal/slo/pricing-svc-availability
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lantern-dashboard-pricing-svc
+  namespace: shop
+  labels:
+    grafana_dashboard: "1"
+    lantern.dev/managed: "true"
+    lantern.dev/service: pricing-svc
+    lantern.dev/team: pricing
+data:
+  pricing-svc.json: |-
+    {
+      "panels": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-main"
+          },
+          "description": "Recorded by the same rules that drive burn-rate alerts (lantern:sli_error:ratio_rate*, lantern:current_burn_rate:ratio) — this panel and the alert can never disagree.",
+          "gridPos": {
+            "h": 8,
+            "w": 16,
+            "x": 0,
+            "y": 0
+          },
+          "id": 1,
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-main"
+              },
+              "expr": "{__name__=~\"lantern:sli_error:ratio_rate.+\", lantern_id=\"pricing-svc-availability\"}",
+              "legendFormat": "{{lantern_window}}",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-main"
+              },
+              "expr": "lantern:current_burn_rate:ratio{lantern_id=\"pricing-svc-availability\"}",
+              "legendFormat": "current burn rate",
+              "refId": "B"
+            }
+          ],
+          "title": "availability: SLI error ratio by window",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-main"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit"
+            }
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 0
+          },
+          "id": 2,
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-main"
+              },
+              "expr": "lantern:period_error_budget_remaining:ratio{lantern_id=\"pricing-svc-availability\"}",
+              "refId": "A"
+            }
+          ],
+          "title": "availability: error budget remaining",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-main"
+          },
+          "description": "Requires Lantern's log-collection DaemonSet (logsCollector.enabled) to actually ship pod logs into Loki — see docs/getting-signals-into-grafana.md. Filtered by namespace=\"shop\", deployment=\"pricing-svc\".",
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 8
+          },
+          "id": 3,
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-main"
+              },
+              "expr": "{namespace=\"shop\", deployment=\"pricing-svc\"}",
+              "refId": "A"
+            }
+          ],
+          "title": "Logs",
+          "type": "logs"
+        },
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo-main"
+          },
+          "description": "Requires a live trace source pushing to the collector — an SDK agent, or a separately-installed eBPF probe (OBI/Beyla) for mode: ebpf. Lantern does not deploy the eBPF probe itself; see docs/getting-signals-into-grafana.md. The service name in this query assumes it matches the resolved resource.service.name; adjust if your instrumentation names it differently.",
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 18
+          },
+          "id": 4,
+          "targets": [
+            {
+              "datasource": {
+                "type": "tempo",
+                "uid": "tempo-main"
+              },
+              "query": "{resource.service.name=\"pricing-svc\"}",
+              "queryType": "traceql",
+              "refId": "A"
+            }
+          ],
+          "title": "Traces",
+          "type": "traces"
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 39,
+      "tags": [
+        "lantern",
+        "team:pricing"
+      ],
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "timezone": "browser",
+      "title": "Lantern: pricing-svc",
+      "uid": "lantern-pricing-svc",
+      "version": 1
+    }

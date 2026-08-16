@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	api "github.com/VedantGuptaX/lantern/api/v1alpha1"
+	"github.com/VedantGuptaX/lantern/pkg/emit/grafana"
 	"github.com/VedantGuptaX/lantern/pkg/emit/otel"
 	"github.com/VedantGuptaX/lantern/pkg/emit/prom"
 	"github.com/VedantGuptaX/lantern/pkg/kube"
@@ -264,13 +265,35 @@ func Compile(svc api.ServiceObservability, stack api.ObservabilityStack, facts F
 		out.Objects = append(out.Objects, rules)
 	}
 
-	// ---- P1 placeholder ----------------------------------------------------
+	// ---- dashboard ----------------------------------------------------------
 
-	if !svc.Spec.Dashboard.Disabled {
+	if !svc.Spec.Dashboard.Disabled && stack.Spec.Backends.Dashboards.Type == "grafana" {
+		dash, ddiags, err := grafana.Build(grafana.Input{
+			Service:       name,
+			Namespace:     ns,
+			Team:          svc.Spec.Team,
+			SLOs:          slos,
+			ExtraPanels:   svc.Spec.Dashboard.ExtraPanels,
+			Patches:       svc.Spec.Dashboard.Patches,
+			PrometheusUID: stack.Spec.Backends.Metrics.Datasource,
+			LokiUID:       stack.Spec.Backends.Logs.Datasource,
+			TempoUID:      stack.Spec.Backends.Traces.Datasource,
+			LogsEnabled:   api.BoolValue(svc.Spec.Signals.Logs.Enabled, true),
+			TracesEnabled: api.BoolValue(svc.Spec.Signals.Traces.Enabled, true),
+			Labels:        labels,
+		})
+		if err != nil {
+			return out, fmt.Errorf("service %q: %w", name, err)
+		}
+		out.Diags = append(out.Diags, liftGrafana(name, ddiags)...)
+		if dash != nil {
+			out.Objects = append(out.Objects, dash)
+		}
+	} else if !svc.Spec.Dashboard.Disabled {
 		out.Diags = append(out.Diags, Diagnostic{
 			Level:   "info",
 			Service: name,
-			Message: "dashboard generation lands in P1; no GrafanaDashboard emitted yet",
+			Message: fmt.Sprintf("backends.dashboards.type is %q, not \"grafana\"; no dashboard emitted", stack.Spec.Backends.Dashboards.Type),
 		})
 	}
 
@@ -413,6 +436,14 @@ func liftProm(service string, ds []prom.Diagnostic) []Diagnostic {
 }
 
 func liftOtel(service string, ds []otel.Diagnostic) []Diagnostic {
+	out := make([]Diagnostic, 0, len(ds))
+	for _, d := range ds {
+		out = append(out, Diagnostic{Level: d.Level, Service: service, Message: strings.TrimSpace(d.Message)})
+	}
+	return out
+}
+
+func liftGrafana(service string, ds []grafana.Diagnostic) []Diagnostic {
 	out := make([]Diagnostic, 0, len(ds))
 	for _, d := range ds {
 		out = append(out, Diagnostic{Level: d.Level, Service: service, Message: strings.TrimSpace(d.Message)})

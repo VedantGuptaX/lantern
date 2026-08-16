@@ -1,0 +1,163 @@
+{{- if .Values.logsCollector.enabled }}
+{{/*
+Tails container stdout/stderr from every node and ships it to backends.logs.
+
+Nothing else in this chart does this. `collector.yaml`'s Deployment-mode
+collector has a `logs` pipeline, but its only receiver is `otlp` — it only
+accepts logs actively pushed to it. Nothing in Lantern pushes application
+logs via OTLP unless a service's own SDK does it. Without this DaemonSet, the
+`loki` subchart (or backends.logs.endpoint) is an empty store with a Grafana
+datasource pointed at it and nothing feeding it.
+
+This must be DaemonSet-mode, not Deployment-mode: reading node-local log
+files under /var/log/pods requires a pod on every node with a hostPath mount.
+
+The label pipeline: the `container` operator extracts k8s.namespace.name,
+k8s.pod.name, k8s.pod.uid and k8s.container.name straight from the log file
+path (see pkg/stanza's container operator docs); k8sattributes then uses
+k8s.pod.uid to look up the owning Deployment via the pod's ownerReferences
+and adds k8s.deployment.name. Loki's own OTLP ingestion treats
+k8s.namespace.name, k8s.pod.name, k8s.deployment.name, and service.name as
+default index labels (checked against Loki's docs directly) — so this is
+enough to filter logs by namespace, pod, or deployment in Grafana with zero
+extra Loki-side config. See docs/getting-signals-into-grafana.md.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}-logs-collector
+  namespace: {{ include "lantern.namespace" . }}
+  labels:
+    {{- include "lantern.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-logs-collector
+  labels:
+    {{- include "lantern.labels" . | nindent 4 }}
+rules:
+  # Matches the k8sattributesprocessor upstream README's documented minimum
+  # for pod -> deployment ownership resolution (pods/namespaces/nodes plus
+  # the workload kinds that can own a pod).
+  - apiGroups: [""]
+    resources: ["pods", "namespaces", "nodes"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets", "deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-logs-collector
+  labels:
+    {{- include "lantern.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-logs-collector
+    namespace: {{ include "lantern.namespace" . }}
+roleRef:
+  kind: ClusterRole
+  name: {{ .Release.Name }}-logs-collector
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: {{ .Release.Name }}-logs-collector
+  namespace: {{ include "lantern.namespace" . }}
+  labels:
+    {{- include "lantern.labels" . | nindent 4 }}
+spec:
+  mode: daemonset
+  serviceAccount: {{ .Release.Name }}-logs-collector
+  image: {{ .Values.logsCollector.image }}
+  resources:
+    {{- toYaml .Values.logsCollector.resources | nindent 4 }}
+  volumes:
+    - name: varlogpods
+      hostPath:
+        path: /var/log/pods
+  volumeMounts:
+    - name: varlogpods
+      mountPath: /var/log/pods
+      readOnly: true
+  config:
+    receivers:
+      filelog:
+        include:
+          - /var/log/pods/*/*/*.log
+        # Excludes this DaemonSet's own pods, so the collector doesn't ingest
+        # (and re-ship, forever) its own log output.
+        exclude:
+          - /var/log/pods/{{ include "lantern.namespace" . }}_{{ .Release.Name }}-logs-collector*/*/*.log
+        start_at: beginning
+        include_file_path: true
+        include_file_name: false
+        operators:
+          - type: container
+            id: container-parser
+
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+
+      k8sattributes:
+        auth_type: serviceAccount
+        passthrough: false
+        pod_association:
+          - sources:
+              - from: resource_attribute
+                name: k8s.pod.uid
+        extract:
+          metadata:
+            - k8s.namespace.name
+            - k8s.pod.name
+            - k8s.deployment.name
+            - k8s.node.name
+
+      # "microservice name" as a first-class label: derived from the
+      # Deployment name, which is what target.name conventionally matches.
+      # If your naming diverges, adjust or drop this via
+      # spec.dashboard.patches on the generated dashboard, or post-process
+      # this pipeline directly.
+      resource/service_name:
+        attributes:
+          - key: service.name
+            from_attribute: k8s.deployment.name
+            action: upsert
+
+      attributes/deny:
+        actions:
+          {{- range .Values.policy.denyLabels }}
+          - key: {{ . }}
+            action: delete
+          {{- end }}
+
+      batch:
+        timeout: 5s
+        send_batch_size: 8192
+
+    exporters:
+      {{- with (include "lantern.logsEndpoint" .) }}
+      otlphttp/logs:
+        logs_endpoint: {{ . }}/otlp/v1/logs
+        tls:
+          insecure: true
+      {{- end }}
+      debug:
+        verbosity: basic
+
+    service:
+      pipelines:
+        logs:
+          receivers: [filelog]
+          processors: [memory_limiter, k8sattributes, resource/service_name, attributes/deny, batch]
+          exporters: [{{ if (include "lantern.logsEndpoint" .) }}otlphttp/logs{{ else }}debug{{ end }}]
+{{- end }}

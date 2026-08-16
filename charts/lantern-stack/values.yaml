@@ -60,6 +60,25 @@ instrumentation:
     provider: obi
     privileged: true
 
+# Log collection: a DaemonSet-mode collector that tails container stdout/
+# stderr from every node and ships it to backends.logs. This is separate from
+# `collector` above (which is Deployment-mode and only accepts telemetry
+# actively pushed to it via OTLP) because reading node-local log files needs a
+# pod on every node with a hostPath mount — a different shape of workload.
+#
+# Off by default, matching this file's bring-your-own posture: turn it on
+# once backends.logs points somewhere real, or use values-quickstart.yaml
+# which enables it. See docs/getting-signals-into-grafana.md.
+logsCollector:
+  enabled: false
+  image: otel/opentelemetry-collector-contrib:latest
+  resources:
+    requests:
+      cpu: 50m
+      memory: 100Mi
+    limits:
+      memory: 200Mi
+
 # The collector every injected agent exports to. Disable it if you already run
 # one and set backends.traces.otlpEndpoint to its address.
 collector:

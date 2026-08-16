@@ -17,16 +17,39 @@ preflight:
   hook:
     enabled: true
 
+# Datasource UIDs matching what's actually provisioned below: kube-
+# prometheus-stack's own Grafana datasource defaults to uid "prometheus"
+# (checked against its chart source); loki-main/tempo-main match the
+# additionalDataSources block under kube-prometheus-stack.grafana further
+# down. Setting these is what turns on the per-service dashboards this chart
+# now generates (backends.dashboards.type: grafana, already the default) —
+# without them, dashboards render with the SLO/logs/traces panels skipped.
+backends:
+  metrics:
+    datasource: prometheus
+  traces:
+    datasource: tempo-main
+  logs:
+    datasource: loki-main
+
 instrumentation:
   provider: otel-operator
   ebpf:
     # Still off. eBPF needs privileged containers and node access; that should
-    # be a deliberate decision even in a demo.
+    # be a deliberate decision even in a demo. Turning this on here does NOT
+    # deploy an eBPF probe — Lantern doesn't ship one. See
+    # docs/getting-signals-into-grafana.md before enabling it.
     enabled: false
 
 collector:
   enabled: true
   replicas: 1
+
+# Ships pod logs into Loki. See templates/logs-collector.yaml and
+# docs/getting-signals-into-grafana.md — without this, Loki is an empty
+# store with a Grafana datasource pointed at nothing.
+logsCollector:
+  enabled: true
 
 policy:
   requireTeamLabel: false
