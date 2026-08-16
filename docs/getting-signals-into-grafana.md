@@ -195,3 +195,180 @@ real per-team folders, but needs grafana-operator installed, which this chart
 doesn't do. Every generated dashboard lands in Grafana's default "General"
 folder for now. See `plan.md`'s roadmap (P1: "Grafana folders and team
 RBAC").
+
+## Kubernetes Events: not shipped by default, same pattern as OBI
+
+Same shape of gap as traces: `kubectl get events` has almost no memory —
+events expire from etcd roughly an hour after they happen, by design, and
+there's no built-in way to query "what events fired at 7:03pm three days
+ago." Nothing in this chart exports them anywhere longer-lived. If you want
+Warning-type events (OOMKilled, Evicted, BackOff, FailedScheduling,
+Unhealthy, etc.) queryable alongside your logs/metrics/traces on a real
+lookback window, something needs to watch the Events API continuously and
+push to Loki as events happen — this chart doesn't do that for you, same as
+it doesn't deploy an eBPF probe for you.
+
+**Verified end-to-end on a real cluster** using
+[kubernetes-events-exporter](https://github.com/ownkube/kubernetes-events-exporter)
+— an actively-maintained fork of the original `resmoio` project, which has
+been dormant since 2023 and has documented event-loss bugs; Bitnami's chart
+was deprecated in August 2025. Deployed as a **standalone Helm release, not
+part of this chart** (same reasoning as OBI: it's a cluster add-on orthogonal
+to what Lantern's compiler emits, not something the `ServiceObservability`
+object model has any business modeling).
+
+```bash
+helm upgrade --install lantern-events-exporter \
+  oci://ghcr.io/ownkube/charts/kubernetes-events-exporter \
+  --version 0.1.2 \
+  -n observability \
+  -f events-exporter-values.yaml
+```
+
+`events-exporter-values.yaml`:
+
+```yaml
+fullnameOverride: lantern-events-exporter
+
+replicaCount: 1
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 32Mi
+  limits:
+    memory: 64Mi
+
+# See the RBAC note below -- the chart's own ClusterRole is intentionally
+# not used here.
+rbac:
+  create: false
+
+serviceAccount:
+  create: true
+
+config:
+  logLevel: info
+  logFormat: json
+  # Only forward events newer than this. Without a cap, the exporter's
+  # first sync after a restart would replay whatever's still sitting in
+  # etcd's ~1h window as a burst -- small compared to the logsCollector
+  # backlog-replay storm documented above (this is capped at etcd's own
+  # short retention, not a node's entire log history), but the same
+  # underlying shape of bug, worth capping deliberately rather than
+  # relying on it being small enough to not matter.
+  maxEventAgeSeconds: 60
+  route:
+    routes:
+      - match:
+          - receiver: "loki"
+  receivers:
+    - name: "loki"
+      loki:
+        url: http://lantern-loki.observability.svc.cluster.local:3100/loki/api/v1/push
+        streamLabels:
+          job: k8s-events
+          namespace: "{{ .InvolvedObject.Namespace }}"
+          kind: "{{ .InvolvedObject.Kind }}"
+          reason: "{{ .Reason }}"
+          type: "{{ .Type }}"
+```
+
+- **The chart's default RBAC is far broader than this needs, and it's worth
+  scoping down.** `rbac.create: true` grants cluster-wide `get/watch/list` on
+  `apiGroups: ["*"], resources: ["*"]` — every object in every namespace,
+  including Secrets — plus full CRUD on `coordination.k8s.io/leases`. That's
+  enough to watch Events, but it's also enough to read every Secret on the
+  cluster if this pod's identity were ever compromised, and the chart
+  exposes no values field to narrow it — the ClusterRole is hardcoded in its
+  template. Set `rbac.create: false` and apply a hand-scoped ClusterRole
+  instead, covering only Events plus the object kinds the exporter actually
+  looks up for `InvolvedObject` enrichment (it caches Pod/Deployment/etc.
+  metadata by default — `config.omitLookup: true` skips this if you'd rather
+  not grant even read access to workload objects):
+
+  ```yaml
+  apiVersion: rbac.authorization.k8s.io/v1
+  kind: ClusterRole
+  metadata:
+    name: lantern-events-exporter
+  rules:
+    - apiGroups: [""]
+      resources: ["events", "pods", "nodes", "namespaces", "replicationcontrollers"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["events.k8s.io"]
+      resources: ["events"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["apps"]
+      resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
+      verbs: ["get", "list", "watch"]
+    - apiGroups: ["batch"]
+      resources: ["jobs", "cronjobs"]
+      verbs: ["get", "list", "watch"]
+  ---
+  apiVersion: rbac.authorization.k8s.io/v1
+  kind: ClusterRoleBinding
+  metadata:
+    name: lantern-events-exporter
+  roleRef:
+    apiGroup: rbac.authorization.k8s.io
+    kind: ClusterRole
+    name: lantern-events-exporter
+  subjects:
+    - kind: ServiceAccount
+      name: lantern-events-exporter
+      namespace: observability
+  ```
+
+  This is a **cluster-scoped RBAC change** (`ClusterRole`/`ClusterRoleBinding`)
+  — treat it with the same care as any other CRD/webhook/ClusterRoleBinding
+  decision: read it, understand exactly what it grants, don't apply it on
+  autopilot.
+
+- **Query it like any other Loki stream.** The `job="k8s-events"` label
+  distinguishes it from pod logs; `namespace`, `kind`, `reason`, and `type`
+  (`Normal`/`Warning`) come from the event itself via `streamLabels`, no
+  extra parsing needed for basic filtering. For a readable message instead
+  of the raw JSON payload the Loki sink sends, use a LogQL `| json` +
+  `line_format` pipeline, e.g.:
+
+  ```
+  {job="k8s-events", namespace=~"my-namespace"}
+    | json
+    | line_format "[{{.type}}] {{.reason}} — {{.involvedObject_kind}}/{{.involvedObject_name}}: {{.message}}"
+  ```
+
+- **This closes the historical-lookback gap, but only from the moment it's
+  deployed onward** — it cannot retroactively recover events that already
+  expired from etcd before it started running. Deploy it early, not
+  reactively after an incident you wish you could look back on.
+
+## Durable storage for logs and traces (production clusters)
+
+The quickstart's own defaults are demo-scale: Loki's chart defaults
+`singleBinary.persistence.enabled: true` (a real PVC, 10Gi, out of the box —
+no override needed), but Tempo's chart defaults `persistence.enabled:
+false` — trace data lives on the pod's ephemeral writable layer and is gone
+on every restart or reschedule. Fine for a five-minute demo, silently weaker
+than log retention for anything you'd actually want to query after an
+incident.
+
+`values-quickstart.yaml` now sets `tempo.persistence.enabled: true` (10Gi)
+to match Loki. **Verified on a real cluster**: a StatefulSet's
+`volumeClaimTemplates` cannot be added in-place — Kubernetes rejects the
+`helm upgrade` outright (`Forbidden: updates to statefulset spec for fields
+other than 'replicas', ... are forbidden`). Enabling persistence on an
+already-running Tempo needs `kubectl delete statefulset <release>-tempo -n
+<namespace>` (safe here specifically because it had no PVC yet, so there was
+no trace data to lose) followed by `helm upgrade` to recreate it with the
+new spec. If you're enabling this on a Tempo that's already had persistence
+on and is just changing size/storageClassName, that same deletion still
+applies — plan for the pod restart, not just the config change.
+
+If your organization already has a central log/trace store (an existing
+Loki/Tempo cluster, an ELK stack, a vendor SaaS), pointing Lantern's
+collector at that instead of the quickstart's own Loki/Tempo (the
+bring-your-own path, `values.yaml`) avoids the PV question entirely — see
+`docs/adopting-an-existing-cluster.md`. PV-backed persistence and "point at
+an existing central store" are the two real options; an ephemeral quickstart
+install is not a production posture for either signal.

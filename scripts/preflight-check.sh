@@ -142,7 +142,7 @@ check_crd_group() {
       # aborted attempt. The only reliable signal is whether the CRD already
       # has real custom resources under it: nothing to lose, or something
       # real that could get clobbered.
-      local resource group instance_output instance_count
+      local resource group instance_output instance_count unrecognized
       resource="${crd%%.*}"
       group="${crd#*.}"
       instance_output=$(kubectl get "$resource.$group" --all-namespaces -o name 2>&1)
@@ -160,10 +160,31 @@ check_crd_group() {
         block "$crd exists and its custom resources could not be listed (RBAC or API error) — cannot confirm it's safe. served versions: [$versions]"
         say "     -> re-run with a kubeconfig that can list $group resources, or investigate manually."
       else
-        block "$crd exists, installed by something other than Helm (raw manifest, an operator lifecycle manager, etc), and already has $instance_count custom resource(s) under it. served versions: [$versions]"
-        say "     -> Helm will SKIP this CRD rather than manage it. The controller Lantern installs"
-        say "        will run against whatever schema is already there. Confirm compatibility before"
-        say "        proceeding, or point Lantern at the existing controller instead of installing a new one."
+        # A nonzero count isn't proof of a foreign install either: this
+        # release's OWN instances can exist here two ways that never stamp
+        # the CRD-LEVEL annotation checked above -- (a) instances from an
+        # earlier successful run of THIS release, which carry their own
+        # per-instance meta.helm.sh/release-name annotation (Helm annotates
+        # regular templated resources, just never the CRD definition), and
+        # (b) instances applied directly by `lantern synth | kubectl apply`
+        # -- how Lantern ships its own ServiceMonitors/PrometheusRules,
+        # entirely outside Helm -- which carry lantern.dev/managed=true
+        # instead. FOUND LIVE on a real second `helm upgrade`: this release's
+        # own Alertmanager/Prometheus and Lantern's own synth-generated
+        # ServiceMonitors/PrometheusRules were all counted as "foreign" here
+        # and blocked every upgrade after the first install.
+        unrecognized=$(kubectl get "$resource.$group" --all-namespaces \
+          -o jsonpath='{range .items[*]}{.metadata.annotations.meta\.helm\.sh/release-name}|{.metadata.annotations.meta\.helm\.sh/release-namespace}|{.metadata.labels.lantern\.dev/managed}{"\n"}{end}' 2>/dev/null \
+          | awk -F'|' -v rel="$RELEASE" -v ns="$NAMESPACE" \
+              '!(($1==rel && $2==ns) || $3=="true") { c++ } END { print c+0 }')
+        if [ "$unrecognized" -eq 0 ] 2>/dev/null; then
+          pass "$crd exists with no CRD-level Helm ownership annotation, and has $instance_count custom resource(s), but every one is recognized as this release's own (Helm-owned by $RELEASE/$NAMESPACE, or lantern.dev/managed=true)"
+        else
+          block "$crd exists, installed by something other than Helm (raw manifest, an operator lifecycle manager, etc), and has $unrecognized unrecognized custom resource(s) under it (of $instance_count total, the rest recognized as this release's own). served versions: [$versions]"
+          say "     -> Helm will SKIP this CRD rather than manage it. The controller Lantern installs"
+          say "        will run against whatever schema is already there. Confirm compatibility before"
+          say "        proceeding, or point Lantern at the existing controller instead of installing a new one."
+        fi
       fi
     else
       block "$crd exists, owned by Helm release '${owner_name:-unknown}' in namespace '${owner_ns:-unknown}' — NOT this install"

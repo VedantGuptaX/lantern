@@ -205,6 +205,18 @@ tempo:
         memory: 128Mi
       limits:
         memory: 256Mi
+  # The chart's own default is persistence.enabled: false -- trace data
+  # lives on whatever ephemeral storage the pod's writable layer gives it
+  # and is gone on every restart/reschedule. Fine for a five-minute demo,
+  # not for anything you'd actually want to query after an incident. Loki
+  # (below) already defaults to a real PVC via its own subchart; this makes
+  # Tempo match it explicitly rather than leaving trace retention silently
+  # weaker than log retention. Verified on a real cluster: a 10Gi Azure Disk
+  # PVC (`disk.csi.azure.com`, default StorageClass) binds cleanly and
+  # survives a pod restart with trace data intact.
+  persistence:
+    enabled: true
+    size: 10Gi
 
 loki:
   enabled: true
