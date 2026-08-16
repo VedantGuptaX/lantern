@@ -104,6 +104,24 @@ func Compile(svc api.ServiceObservability, stack api.ObservabilityStack, facts F
 				resolvedMode, facts.Runtime, facts.RuntimeEvidence, why),
 		})
 	}
+	if svc.Spec.ServiceKind == api.KindInference && (resolvedMode == api.ModeAgent || resolvedMode == api.ModeEBPF) {
+		// `lantern discover` sets mode: none for serviceKind: inference itself
+		// (see pkg/discover), so this only fires for a hand-written spec that
+		// left instrumentation.mode on auto. It's a warning rather than a
+		// silent override because Compile does not second-guess an explicit
+		// choice the caller made — but GPU model servers (vLLM, Triton, NIM,
+		// ...) already export their own Prometheus metrics, and agent/eBPF
+		// injection into a GPU-resident serving process is rarely what's
+		// wanted.
+		out.Diags = append(out.Diags, Diagnostic{
+			Level:   "warn",
+			Service: name,
+			Message: fmt.Sprintf(
+				"serviceKind inference resolved instrumentation mode to %q; GPU model servers usually export their own "+
+					"Prometheus metrics and don't need OTel agent/eBPF injection — set instrumentation.mode: none explicitly if that's not wanted here",
+				resolvedMode),
+		})
+	}
 
 	// ---- policy: sampling rate --------------------------------------------
 

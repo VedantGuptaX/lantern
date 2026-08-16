@@ -71,6 +71,15 @@ const (
 	KindCron     ServiceKind = "cron"
 	KindDatabase ServiceKind = "database"
 	KindCustom   ServiceKind = "custom"
+	// KindInference is a GPU model-serving workload (vLLM, Triton, NIM, TGI,
+	// ...). Unlike KindHTTP there is no single semantic-convention metric
+	// family to build queries against — every inference server names its
+	// histograms and gauges differently — so serviceKind: inference has no
+	// built-in SLI template. Its SLOs are always built from an explicit
+	// SLO.Metric: type: latency for a duration histogram (time-to-first-token,
+	// inter-token latency, ...) or type: saturation for a gauge (queue depth,
+	// GPU utilization, ...). See SLO.Metric and SLOSaturation.
+	KindInference ServiceKind = "inference"
 )
 
 type Signals struct {
@@ -101,14 +110,42 @@ const (
 	SLOAvailability SLOType = "availability"
 	SLOLatency      SLOType = "latency"
 	SLOCustom       SLOType = "custom"
+	// SLOSaturation is a threshold-breach ratio over a gauge: the fraction of
+	// time Metric was above Threshold. It reduces to the same
+	// bad-events/total-events shape as every other SLO type, so it gets the
+	// same burn-rate alerts for free. Use it for anything reported as a
+	// point-in-time level rather than a duration or a count — inference
+	// queue depth (e.g. vllm:num_requests_waiting), GPU utilization or
+	// memory-copy utilization from dcgm-exporter, and similar capacity
+	// signals. Requires Metric and a plain-number Threshold (no unit).
+	SLOSaturation SLOType = "saturation"
 )
 
 type SLO struct {
 	Name      string  `json:"name"`
 	Type      SLOType `json:"type"`
-	Objective float64 `json:"objective"`           // e.g. 99.9
-	Threshold string  `json:"threshold,omitempty"` // latency only, e.g. "300ms"
-	Window    string  `json:"window,omitempty"`    // default 30d
+	Objective float64 `json:"objective"` // e.g. 99.9
+	// Threshold's meaning depends on Type: a duration for latency (e.g.
+	// "300ms"), a bare number for saturation (e.g. "10"), unused otherwise.
+	Threshold string `json:"threshold,omitempty"`
+	Window    string `json:"window,omitempty"` // default 30d
+	// Metric overrides the metric this SLO is built against, instead of the
+	// serviceKind's built-in semantic-convention family.
+	//
+	// For type: latency, it's the histogram base name with no _bucket/_count
+	// suffix (e.g. "vllm:time_to_first_token_seconds" for TTFT,
+	// "vllm:time_per_output_token_seconds" for inter-token latency — Triton
+	// and NIM export their own equivalents under different names; point this
+	// at whatever your exporter actually emits).
+	//
+	// For type: saturation it is required — the gauge to threshold (e.g.
+	// "vllm:num_requests_waiting", or a per-pod DCGM series such as
+	// "DCGM_FI_DEV_GPU_UTIL" once dcgm-exporter's Kubernetes pod-mapping is
+	// enabled so the series carries this service's pod/namespace labels).
+	//
+	// Lantern does not verify the metric exists, its label set, or its
+	// histogram bucket boundaries — that's on you and your exporter's docs.
+	Metric string `json:"metric,omitempty"`
 	// Custom SLIs supply their own ratio. Both are required when Type=custom.
 	ErrorQuery string `json:"errorQuery,omitempty"`
 	TotalQuery string `json:"totalQuery,omitempty"`

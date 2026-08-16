@@ -153,6 +153,37 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  name: llama-70b-server
+  namespace: ml
+  labels:
+    app: llama-70b-server
+    team: ml-platform
+spec:
+  selector:
+    matchLabels:
+      app: llama-70b-server
+  template:
+    metadata:
+      labels:
+        app: llama-70b-server
+    spec:
+      containers:
+        - name: server
+          image: vllm/vllm-openai:v0.6.3
+          ports:
+            - name: http
+              containerPort: 8000
+            - name: metrics
+              containerPort: 8000
+          resources:
+            limits:
+              nvidia.com/gpu: "1"
+            requests:
+              nvidia.com/gpu: "1"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
   name: coredns
   namespace: kube-system
   labels:

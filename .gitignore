@@ -8,3 +8,4 @@ charts/*/Chart.lock
 # specifics). Not for the public repo — keep this file local to whichever bastion
 # host runs the AKS onboarding engagement.
 CLAUDE.md
+plan.md

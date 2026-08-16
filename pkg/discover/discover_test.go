@@ -90,12 +90,13 @@ func TestServiceKindInference(t *testing.T) {
 	got := byName(Discover(loadFixture(t), Options{}))
 
 	want := map[string]api.ServiceKind{
-		"checkout-api":      api.KindHTTP,     // port named http
-		"pricing-svc":       api.KindGRPC,     // port named grpc
-		"settlement-worker": api.KindWorker,   // name contains "worker", no ports
-		"nightly-reconcile": api.KindCron,     // CronJob
-		"storefront":        api.KindHTTP,     // port named http
-		"session-store":     api.KindDatabase, // redis image
+		"checkout-api":      api.KindHTTP,      // port named http
+		"pricing-svc":       api.KindGRPC,      // port named grpc
+		"settlement-worker": api.KindWorker,    // name contains "worker", no ports
+		"nightly-reconcile": api.KindCron,      // CronJob
+		"storefront":        api.KindHTTP,      // port named http
+		"session-store":     api.KindDatabase,  // redis image
+		"llama-70b-server":  api.KindInference, // vllm/vllm-openai image + nvidia.com/gpu limit
 	}
 	for name, wantKind := range want {
 		r, ok := got[name]
@@ -129,6 +130,75 @@ func TestOffTheShelfDatastoreIsNotCalledHTTP(t *testing.T) {
 	}
 	if !flagged {
 		t.Error("an off-the-shelf datastore guess must be flagged for review")
+	}
+}
+
+// TestGPUWorkloadGetsInferenceKindAndNoAgentInjection guards two things:
+// serviceKind inference must be inferred from a known GPU model-serving
+// image, and the draft spec must default instrumentation.mode to none so
+// `lantern synth` never tries to inject an OTel agent into a GPU-resident
+// serving process.
+func TestGPUWorkloadGetsInferenceKindAndNoAgentInjection(t *testing.T) {
+	r, ok := byName(Discover(loadFixture(t), Options{}))["llama-70b-server"]
+	if !ok {
+		t.Fatal("llama-70b-server was not discovered")
+	}
+	if r.Service.Spec.ServiceKind != api.KindInference {
+		t.Fatalf("serviceKind = %q, want inference", r.Service.Spec.ServiceKind)
+	}
+	if r.Service.Spec.Instrumentation.Mode != api.ModeNone {
+		t.Errorf("instrumentation.mode = %q, want none", r.Service.Spec.Instrumentation.Mode)
+	}
+
+	var flagged bool
+	for _, n := range r.Notes {
+		if n.Field == "serviceKind" && n.LowConfidence {
+			flagged = true
+		}
+	}
+	if !flagged {
+		t.Error("an inference guess must be flagged for review like any other inferred serviceKind")
+	}
+}
+
+// TestGPUResourceRequestAloneIsEnough checks the fallback path: a workload
+// with no recognisable inference-server image but a real GPU request should
+// still be flagged as inference rather than silently defaulting to http.
+func TestGPUResourceRequestAloneIsEnough(t *testing.T) {
+	ws, err := ParseWorkloads([]byte(`
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: custom-gpu-server
+  namespace: ml
+spec:
+  selector:
+    matchLabels:
+      app: custom-gpu-server
+  template:
+    metadata:
+      labels:
+        app: custom-gpu-server
+    spec:
+      containers:
+        - name: server
+          image: registry.internal/our-own-inference-server:1.0.0
+          ports:
+            - name: http
+              containerPort: 8080
+          resources:
+            limits:
+              nvidia.com/gpu: "2"
+`))
+	if err != nil {
+		t.Fatalf("ParseWorkloads: %v", err)
+	}
+	results := Discover(ws, Options{})
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Service.Spec.ServiceKind != api.KindInference {
+		t.Errorf("serviceKind = %q, want inference (nvidia.com/gpu limit was set)", results[0].Service.Spec.ServiceKind)
 	}
 }
 

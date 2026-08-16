@@ -79,12 +79,24 @@ func BuildRules(in RuleInput) (*kube.Object, []Diagnostic, error) {
 			return nil, nil, err
 		}
 		if sli.Experimental {
-			diags = append(diags, Diagnostic{
-				Level: "warn",
-				Message: fmt.Sprintf(
-					"slo %q builds on experimental OpenTelemetry semantic conventions for serviceKind %q; "+
+			var reason string
+			if slo.Metric != "" {
+				// type: latency/metric override or type: saturation — an
+				// explicit vendor/exporter metric Lantern did not name and
+				// cannot verify (vLLM, Triton, NIM, dcgm-exporter, ...).
+				reason = fmt.Sprintf(
+					"builds on metric %q, which is not an OpenTelemetry semantic convention Lantern owns or verifies; "+
+						"confirm the exact name, labels, and (for latency) histogram bucket boundaries against what your exporter actually emits",
+					slo.Metric)
+			} else {
+				reason = fmt.Sprintf(
+					"builds on experimental OpenTelemetry semantic conventions for serviceKind %q; "+
 						"the underlying metric may be renamed upstream. Pin your semconv version.",
-					slo.Name, in.ServiceKind),
+					in.ServiceKind)
+			}
+			diags = append(diags, Diagnostic{
+				Level:   "warn",
+				Message: fmt.Sprintf("slo %q %s.", slo.Name, reason),
 			})
 		}
 

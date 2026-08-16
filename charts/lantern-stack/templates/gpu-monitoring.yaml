@@ -1,0 +1,95 @@
+{{- if .Values.gpuMonitoring.enabled }}
+{{/*
+GPU / DCGM cluster-level monitoring.
+
+dcgm-exporter is a DaemonSet — one instance per GPU node — the same shape as
+node-exporter, and Lantern already treats node-exporter as out of its
+per-service compiler scope (see README "System metrics"). This follows the
+same pattern: a ServiceMonitor pointed at whatever dcgm-exporter you already
+run (installed by the NVIDIA GPU Operator or its own chart — NOT by this
+chart), plus a bundled PrometheusRule of GPU health alerts. Both are
+additive and don't restart pods, matching CLAUDE.md's "what's safe to do
+without asking" for this kind of change.
+
+Per-service GPU SLOs (queue depth, ttft, inter-token latency, ...) go through
+serviceKind: inference on a ServiceObservability spec instead — see
+docs/gpu-and-inference-observability.md.
+*/}}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Release.Name }}-dcgm-exporter
+  namespace: {{ include "lantern.namespace" . }}
+  labels:
+    {{- include "lantern.labels" . | nindent 4 }}
+    lantern.dev/managed: "true"
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Values.gpuMonitoring.dcgmExporter.namespace }}
+  selector:
+    matchLabels:
+      {{- toYaml .Values.gpuMonitoring.dcgmExporter.selector | nindent 6 }}
+  endpoints:
+    - port: {{ .Values.gpuMonitoring.dcgmExporter.port }}
+      interval: 30s
+      path: /metrics
+{{- if .Values.gpuMonitoring.alerts.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ .Release.Name }}-dcgm-alerts
+  namespace: {{ include "lantern.namespace" . }}
+  labels:
+    {{- include "lantern.labels" . | nindent 4 }}
+    lantern.dev/managed: "true"
+spec:
+  groups:
+    - name: lantern-gpu-health
+      rules:
+        # Sustained heat throttles clocks and shortens hardware life. `for: 5m`
+        # avoids paging on a transient spike from a single hot kernel.
+        - alert: LanternGPUThermalThrottleImminent
+          expr: DCGM_FI_DEV_GPU_TEMP > {{ .Values.gpuMonitoring.alerts.thermalCriticalC }}
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "GPU {{`{{ $labels.gpu }}`}} on {{`{{ $labels.Hostname }}`}} is running hot ({{`{{ $value }}`}}°C)"
+            description: "DCGM_FI_DEV_GPU_TEMP has been above {{ .Values.gpuMonitoring.alerts.thermalCriticalC }}°C for 5m."
+
+        # Double-bit ECC errors are uncorrectable: any result computed on this
+        # GPU since the error may be silently wrong, not just slow.
+        - alert: LanternGPUUncorrectableECCError
+          expr: increase(DCGM_FI_DEV_ECC_DBE_VOL_TOTAL[15m]) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: "GPU {{`{{ $labels.gpu }}`}} on {{`{{ $labels.Hostname }}`}} reported a double-bit ECC error"
+            description: "Uncorrectable memory fault. Drain workloads off this GPU and check nvidia-smi -q -d ECC before trusting further results from it."
+
+        # XID errors are the NVIDIA driver's own fault-reporting channel; many
+        # of them (e.g. 79, "GPU has fallen off the bus") mean the GPU is no
+        # longer usable until the node is rebooted or the card reset.
+        - alert: LanternGPUXIDError
+          expr: increase(DCGM_FI_DEV_XID_ERRORS[15m]) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: "GPU {{`{{ $labels.gpu }}`}} on {{`{{ $labels.Hostname }}`}} reported an XID error"
+            description: "Check dmesg and nvidia-smi -q on the node for the specific XID code; look it up against NVIDIA's XID error reference before deciding whether to drain the node."
+
+        # Sustained operation at the power cap throttles clocks just like
+        # thermal limiting does, but shows up as a mysteriously slow GPU
+        # rather than an obvious hot one.
+        - alert: LanternGPUPowerNearLimit
+          expr: (DCGM_FI_DEV_POWER_USAGE / DCGM_FI_DEV_POWER_MGMT_LIMIT * 100) > (100 - {{ .Values.gpuMonitoring.alerts.powerHeadroomPercent }})
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "GPU {{`{{ $labels.gpu }}`}} on {{`{{ $labels.Hostname }}`}} is within {{ .Values.gpuMonitoring.alerts.powerHeadroomPercent }}% of its power cap"
+            description: "Sustained near-cap power draw throttles clocks (see DCGM_FI_DEV_CLOCK_THROTTLE_REASONS). Consider workload rebalancing or checking for a power-limited SKU."
+{{- end }}
+{{- end }}

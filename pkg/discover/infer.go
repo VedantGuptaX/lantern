@@ -131,6 +131,21 @@ func discoverOne(w Workload, opts Options) Result {
 			"workload declared no selector; falling back to the conventional app label", true)
 	}
 
+	// --- instrumentation mode ------------------------------------------------
+
+	instr := api.InstrumentationCfg{Runtime: rt.Runtime}
+	if kind == api.KindInference {
+		// GPU model servers (vLLM, Triton, NIM, ...) already export their own
+		// Prometheus metrics natively. Injecting an OTel agent into a process
+		// like that doesn't add instrumentation, it risks destabilising a
+		// GPU-resident serving process for no signal gained — so skip agent
+		// injection by default rather than let auto-detection pick an agent
+		// or eBPF based on the container's runtime.
+		instr.Mode = api.ModeNone
+		note("instrumentation.mode", "none",
+			"serviceKind inference: GPU model servers export their own Prometheus metrics; OTel agent/eBPF injection is skipped by default", false)
+	}
+
 	spec := api.ServiceObservability{
 		APIVersion: api.GroupVersion,
 		Kind:       api.KindServiceObservability,
@@ -148,11 +163,9 @@ func discoverOne(w Workload, opts Options) Result {
 				Selector:    selector,
 				MetricsPort: metricsPort,
 			},
-			ServiceKind: kind,
-			Team:        team,
-			Instrumentation: api.InstrumentationCfg{
-				Runtime: rt.Runtime,
-			},
+			ServiceKind:     kind,
+			Team:            team,
+			Instrumentation: instr,
 		},
 	}
 
@@ -193,10 +206,47 @@ func matchInfraImage(images []string) (api.ServiceKind, string, bool) {
 	return "", "", false
 }
 
+// inferenceImageHints are substrings of known GPU model-serving images. This
+// is deliberately loose (Contains, not an exact image match) because these
+// projects publish under many registries and tags — nvcr.io/nim/..., a
+// private mirror of vllm/vllm-openai, etc. — and a missed match here just
+// means the workload falls through to the generic HTTP guess, which is
+// always flagged for review anyway.
+var inferenceImageHints = []string{
+	"vllm", "tritonserver", "nvcr.io/nim", "/nim-", "text-generation-inference",
+	"tgi", "tensorrt-llm", "trt-llm", "ray-llm", "lmdeploy",
+}
+
+func matchInferenceImage(images []string) (string, bool) {
+	for _, img := range images {
+		l := strings.ToLower(img)
+		for _, hint := range inferenceImageHints {
+			if strings.Contains(l, hint) {
+				return img, true
+			}
+		}
+	}
+	return "", false
+}
+
 // inferServiceKind guesses what the workload does from its ports and name.
 func inferServiceKind(w Workload) (api.ServiceKind, string, bool) {
 	if w.Kind == "CronJob" {
 		return api.KindCron, "workload is a CronJob", false
+	}
+
+	// Checked before the generic infra/HTTP heuristics: a GPU inference
+	// server usually also exposes an "http" or "api" named port for its
+	// OpenAI-compatible endpoint, which would otherwise get misclassified as
+	// a plain HTTP service and lose its shot at ttft/inter-token-latency/
+	// queue-depth SLOs.
+	if img, ok := matchInferenceImage(w.Images()); ok {
+		return api.KindInference, fmt.Sprintf(
+			"image %q matches a known GPU model-serving project; set slos with an explicit metric (see docs) once you know its export names", img,
+		), true
+	}
+	if w.GPURequested() {
+		return api.KindInference, "container requests nvidia.com/gpu; assuming a GPU model-serving workload — correct this if it's GPU-accelerated batch/training work instead", true
 	}
 
 	if kind, why, ok := matchInfraImage(w.Images()); ok {
@@ -376,8 +426,15 @@ func renderSpec(s api.ServiceObservability) string {
 	if s.Spec.Team != "" {
 		spec.Set("team", yamlx.S(s.Spec.Team))
 	}
-	if s.Spec.Instrumentation.Runtime != "" {
-		spec.Set("instrumentation", yamlx.NewMap("runtime", yamlx.S(string(s.Spec.Instrumentation.Runtime))))
+	if s.Spec.Instrumentation.Runtime != "" || s.Spec.Instrumentation.Mode != "" {
+		instr := yamlx.NewMap()
+		if s.Spec.Instrumentation.Mode != "" {
+			instr.Set("mode", yamlx.S(string(s.Spec.Instrumentation.Mode)))
+		}
+		if s.Spec.Instrumentation.Runtime != "" {
+			instr.Set("runtime", yamlx.S(string(s.Spec.Instrumentation.Runtime)))
+		}
+		spec.Set("instrumentation", instr)
 	}
 
 	return yamlx.Encode(yamlx.NewMap(

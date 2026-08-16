@@ -39,6 +39,9 @@ type Container struct {
 	Args    []string
 	Env     map[string]string
 	Ports   []Port
+	// GPULimit is the container's nvidia.com/gpu resource limit, if any
+	// (e.g. "1"). Empty when no GPU is requested.
+	GPULimit string
 }
 
 // Port is a named container port.
@@ -224,7 +227,35 @@ func parseContainer(m map[string]any) Container {
 			c.Ports = append(c.Ports, Port{Name: name, Port: num})
 		}
 	}
+
+	// nvidia.com/gpu is checked in both limits and requests: the device
+	// plugin only actually schedules a GPU via limits (Kubernetes requires
+	// requests==limits for extended resources), but reading both means a
+	// hand-written manifest that only sets requests is still recognised.
+	if res, ok := m["resources"].(map[string]any); ok {
+		for _, section := range []string{"limits", "requests"} {
+			rm, ok := res[section].(map[string]any)
+			if !ok {
+				continue
+			}
+			if v, ok := rm["nvidia.com/gpu"]; ok {
+				c.GPULimit = fmt.Sprint(v)
+				break
+			}
+		}
+	}
 	return c
+}
+
+// GPURequested reports whether any container in the pod template requests an
+// NVIDIA GPU via the nvidia.com/gpu extended resource.
+func (w Workload) GPURequested() bool {
+	for _, c := range w.Containers {
+		if c.GPULimit != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // Images returns every container image, for runtime detection.

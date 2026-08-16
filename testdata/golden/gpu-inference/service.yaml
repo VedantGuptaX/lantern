@@ -1,0 +1,37 @@
+apiVersion: lantern.dev/v1alpha1
+kind: ServiceObservability
+metadata:
+  name: llama-70b-server
+  namespace: ml
+spec:
+  target:
+    kind: Deployment
+    name: llama-70b-server
+    metricsPort: metrics
+  serviceKind: inference
+  team: ml-platform
+  signals:
+    metrics: true
+    traces:
+      enabled: false
+  slos:
+    - name: ttft
+      type: latency
+      metric: vllm:time_to_first_token_seconds
+      objective: 99.0
+      threshold: 500ms
+      window: 7d
+    - name: inter-token-latency
+      type: latency
+      metric: vllm:time_per_output_token_seconds
+      objective: 99.0
+      threshold: 50ms
+      window: 7d
+    - name: queue-depth
+      type: saturation
+      metric: vllm:num_requests_waiting
+      objective: 99.0
+      threshold: "10"
+      window: 7d
+  instrumentation:
+    mode: none

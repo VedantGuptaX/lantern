@@ -105,6 +105,41 @@ defaults:
     metrics: 30d
 
 # ---------------------------------------------------------------------------
+# GPU / DCGM cluster-level monitoring — off by default.
+#
+# This assumes dcgm-exporter is ALREADY installed and running — typically by
+# the NVIDIA GPU Operator, sometimes as a standalone chart. Lantern does not
+# install or manage dcgm-exporter itself, the same way it doesn't install
+# node-exporter (see README "System metrics"). Turning this on only adds a
+# ServiceMonitor pointed at your existing dcgm-exporter Service, plus a
+# bundled PrometheusRule of GPU health alerts (thermal, uncorrectable ECC,
+# XID, power headroom). Neither restarts pods or touches running services.
+#
+# Per-service GPU/inference SLOs (ttft, inter-token latency, queue depth) are
+# a separate, per-ServiceObservability concern handled by the compiler, not
+# this chart — see serviceKind: inference and type: saturation in
+# docs/gpu-and-inference-observability.md. Those need dcgm-exporter's own
+# Kubernetes pod-mapping feature (DCGM_EXPORTER_KUBERNETES=true, set on
+# dcgm-exporter itself — not a value here) so its series carry pod/namespace
+# labels a ServiceObservability's selector can match against.
+# ---------------------------------------------------------------------------
+gpuMonitoring:
+  enabled: false
+  dcgmExporter:
+    # Defaults match the NVIDIA GPU Operator's own naming. Check
+    # `kubectl get svc -A -l app=nvidia-dcgm-exporter` if yours differs.
+    namespace: gpu-operator
+    selector:
+      app: nvidia-dcgm-exporter
+    port: metrics
+  alerts:
+    enabled: true
+    # Defaults follow NVIDIA's own published guidance for these signals;
+    # override per fleet if yours differs.
+    thermalCriticalC: 85
+    powerHeadroomPercent: 5
+
+# ---------------------------------------------------------------------------
 # Subcharts — all off. See values-quickstart.yaml.
 # ---------------------------------------------------------------------------
 opentelemetry-operator:

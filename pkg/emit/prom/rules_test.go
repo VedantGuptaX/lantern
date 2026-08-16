@@ -139,6 +139,75 @@ func TestUnsupportedServiceKindIsRejected(t *testing.T) {
 	}
 }
 
+// TestLatencyMetricOverrideBypassesServiceKind checks the escape hatch that
+// makes serviceKind: inference (and any other kind) usable for a
+// vendor-specific histogram like vLLM's time-to-first-token: an explicit
+// slo.Metric must win over the serviceKind's built-in family, even on a kind
+// (KindCustom) that has no built-in family at all.
+func TestLatencyMetricOverrideBypassesServiceKind(t *testing.T) {
+	sli, err := BuildSLI(api.SLO{
+		Name:      "ttft",
+		Type:      api.SLOLatency,
+		Metric:    "vllm:time_to_first_token_seconds",
+		Threshold: "500ms",
+	}, api.KindCustom, `service_name="llama-70b"`)
+	if err != nil {
+		t.Fatalf("BuildSLI with metric override: %v", err)
+	}
+	if !sli.Experimental {
+		t.Error("a metric override is never a vetted OTel semantic convention; Experimental must be true")
+	}
+	if !strings.Contains(sli.Total, "vllm:time_to_first_token_seconds_count") {
+		t.Errorf("Total = %q, want it built from the override metric", sli.Total)
+	}
+	if !strings.Contains(sli.Error, "vllm:time_to_first_token_seconds_bucket") {
+		t.Errorf("Error = %q, want it built from the override metric", sli.Error)
+	}
+	if !strings.Contains(sli.Error, `le="0.5"`) {
+		t.Errorf("Error = %q, want le=\"0.5\" for a 500ms threshold", sli.Error)
+	}
+}
+
+// TestSaturationRequiresMetricAndThreshold guards the two fields a
+// saturation SLO cannot function without.
+func TestSaturationRequiresMetricAndThreshold(t *testing.T) {
+	if _, err := BuildSLI(api.SLO{Name: "q", Type: api.SLOSaturation, Threshold: "10"}, api.KindInference, ""); err == nil {
+		t.Error("expected an error when metric is missing")
+	}
+	if _, err := BuildSLI(api.SLO{Name: "q", Type: api.SLOSaturation, Metric: "vllm:num_requests_waiting"}, api.KindInference, ""); err == nil {
+		t.Error("expected an error when threshold is missing")
+	}
+	if _, err := BuildSLI(api.SLO{Name: "q", Type: api.SLOSaturation, Metric: "vllm:num_requests_waiting", Threshold: "not-a-number"}, api.KindInference, ""); err == nil {
+		t.Error("expected an error when threshold is not a plain number")
+	}
+}
+
+// TestSaturationBuildsThresholdBreachRatio checks the gauge > bool N
+// subquery pattern, since a mistake here silently selects nothing (the SLI
+// looks fine but the numerator is always zero).
+func TestSaturationBuildsThresholdBreachRatio(t *testing.T) {
+	sli, err := BuildSLI(api.SLO{
+		Name:      "queue-depth",
+		Type:      api.SLOSaturation,
+		Metric:    "vllm:num_requests_waiting",
+		Threshold: "10",
+	}, api.KindInference, `service_name="llama-70b"`)
+	if err != nil {
+		t.Fatalf("BuildSLI: %v", err)
+	}
+	if !sli.Experimental {
+		t.Error("saturation SLIs are always built on a caller-supplied metric; Experimental must be true")
+	}
+	wantError := `count_over_time((vllm:num_requests_waiting{service_name="llama-70b"} > bool 10)[{{.window}}:])`
+	if sli.Error != wantError {
+		t.Errorf("Error = %q, want %q", sli.Error, wantError)
+	}
+	wantTotal := `count_over_time(vllm:num_requests_waiting{service_name="llama-70b"}[{{.window}}:])`
+	if sli.Total != wantTotal {
+		t.Errorf("Total = %q, want %q", sli.Total, wantTotal)
+	}
+}
+
 func TestObjectiveOutOfRangeIsRejected(t *testing.T) {
 	for _, obj := range []float64{0, 100, 100.5, -1} {
 		_, _, err := BuildRules(RuleInput{

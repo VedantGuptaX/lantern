@@ -38,6 +38,35 @@ labels, and ignores everything Lantern emits.
 Both are set in `values-quickstart.yaml`. If you run these components yourself,
 check them.
 
+## GPU / DCGM monitoring — `gpuMonitoring.enabled`
+
+Off by default. When turned on, adds a `ServiceMonitor` pointed at whatever
+dcgm-exporter you already run (installed by the NVIDIA GPU Operator or its own
+chart — this chart does not install dcgm-exporter itself, the same way it
+doesn't install node-exporter) plus a `PrometheusRule` of GPU health alerts:
+thermal throttle risk, uncorrectable ECC errors, XID errors, and power
+headroom. Neither restarts pods or touches running services.
+
+```yaml
+gpuMonitoring:
+  enabled: true
+  dcgmExporter:
+    namespace: gpu-operator          # where dcgm-exporter actually runs
+    selector: { app: nvidia-dcgm-exporter }
+    port: metrics
+```
+
+This is cluster-level infrastructure monitoring, not per-service SLOs — same
+split as node-exporter vs. an OpenTelemetry HTTP latency SLO. For a specific
+`ServiceObservability` to build its own SLO against GPU saturation (or against
+an inference server's queue depth, time-to-first-token, or inter-token
+latency), use `serviceKind: inference` and `type: saturation` /
+`type: latency` with an explicit `metric:` in the compiler — see
+[docs/gpu-and-inference-observability.md](../../docs/gpu-and-inference-observability.md).
+Per-pod GPU attribution additionally requires dcgm-exporter's own
+`DCGM_EXPORTER_KUBERNETES=true` setting (configured on dcgm-exporter, not
+here) so its series carry `pod`/`namespace` labels a selector can match.
+
 ## Status: written, never installed
 
 This chart has not been resolved by `helm dependency update`, linted, rendered,

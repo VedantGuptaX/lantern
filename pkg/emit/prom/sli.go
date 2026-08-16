@@ -62,8 +62,30 @@ func familyFor(kind api.ServiceKind) (metricFamily, error) {
 			experimental: true,
 		}, nil
 	default:
-		return metricFamily{}, fmt.Errorf("serviceKind %q has no built-in SLI template; use type: custom with errorQuery and totalQuery", kind)
+		return metricFamily{}, fmt.Errorf(
+			"serviceKind %q has no built-in SLI template; use type: custom with errorQuery and totalQuery, "+
+				"type: latency with an explicit metric (a duration histogram), or type: saturation (a gauge)", kind)
 	}
+}
+
+// latencyFamily resolves the counter/bucket pair a type: latency SLO builds
+// against. An explicit slo.Metric always wins over the serviceKind's
+// built-in family: this is what lets serviceKind: inference (or any kind)
+// build a latency SLO against a vendor-specific histogram — time-to-first-token,
+// inter-token latency, or anything else — without Lantern hardcoding one
+// inference server's naming convention. It is always marked experimental:
+// Lantern has no semantic-convention guarantee about a metric it didn't name,
+// and cannot verify the histogram's bucket boundaries actually include the
+// threshold given.
+func latencyFamily(slo api.SLO, kind api.ServiceKind) (metricFamily, error) {
+	if strings.TrimSpace(slo.Metric) != "" {
+		return metricFamily{
+			counter:      slo.Metric + "_count",
+			bucket:       slo.Metric + "_bucket",
+			experimental: true,
+		}, nil
+	}
+	return familyFor(kind)
 }
 
 // BuildSLI renders the error-ratio expressions for one SLO.
@@ -91,7 +113,7 @@ func BuildSLI(slo api.SLO, kind api.ServiceKind, selector string) (SLI, error) {
 		}, nil
 
 	case api.SLOLatency:
-		f, err := familyFor(kind)
+		f, err := latencyFamily(slo, kind)
 		if err != nil {
 			return SLI{}, err
 		}
@@ -110,6 +132,27 @@ func BuildSLI(slo api.SLO, kind api.ServiceKind, selector string) (SLI, error) {
 			Total:        total,
 			Experimental: f.experimental,
 		}, nil
+
+	case api.SLOSaturation:
+		if strings.TrimSpace(slo.Metric) == "" {
+			return SLI{}, fmt.Errorf(
+				"slo %q: type saturation requires metric (a gauge, e.g. vllm:num_requests_waiting or DCGM_FI_DEV_GPU_UTIL)", slo.Name)
+		}
+		if strings.TrimSpace(slo.Threshold) == "" {
+			return SLI{}, fmt.Errorf(
+				"slo %q: type saturation requires a threshold (a plain number the gauge must stay under, e.g. \"10\" — not a duration)", slo.Name)
+		}
+		n, err := strconv.ParseFloat(slo.Threshold, 64)
+		if err != nil {
+			return SLI{}, fmt.Errorf("slo %q: threshold %q must be a plain number for type saturation: %w", slo.Name, slo.Threshold, err)
+		}
+		// count_over_time((gauge > bool N)[window:]) counts the samples where
+		// the gauge breached N; dividing by the total sample count over the
+		// same window gives the same bad/total ratio shape every other SLO
+		// type produces, so it gets the same burn-rate alerts for free.
+		bad := fmt.Sprintf("count_over_time((%s{%s} > bool %s)[{{.window}}:])", slo.Metric, selector, trimFloat(n))
+		total := fmt.Sprintf("count_over_time(%s{%s}[{{.window}}:])", slo.Metric, selector)
+		return SLI{Error: bad, Total: total, Experimental: true}, nil
 
 	default:
 		return SLI{}, fmt.Errorf("slo %q: unknown type %q", slo.Name, slo.Type)
