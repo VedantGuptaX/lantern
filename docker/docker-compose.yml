@@ -1,12 +1,15 @@
-# Standalone log stack for plain Docker/Docker Compose -- no Kubernetes
-# involved, and this file has zero relationship to Lantern's Go compiler or
-# charts/lantern-stack. It exists for the same reason that chart does: an
-# opt-in, demo-scale convenience for people who don't already run something
-# to send logs to. See docker/README.md before running this -- there are two
-# manual steps (installing a Docker plugin, and adding a `logging:` block to
-# your OWN services) that this file alone doesn't do for you.
+# Standalone logs + metrics stack for plain Docker/Docker Compose -- no
+# Kubernetes involved, and this file has zero relationship to Lantern's Go
+# compiler or charts/lantern-stack. It exists for the same reason that chart
+# does: an opt-in, demo-scale convenience for people who don't already run
+# something to send logs and metrics to. See docker/README.md before running
+# this -- there are manual steps (installing a Docker plugin, and adding
+# `logging:`/scrape config for your OWN services) that this file alone
+# doesn't do for you.
 #
-# Metrics and traces are intentionally out of scope here. This is logs only.
+# Metrics here means Prometheus + host-level metrics via node-exporter.
+# Per-container resource metrics (cAdvisor) are NOT included -- see
+# docker/README.md for why. Traces are still out of scope.
 
 services:
   loki:
@@ -37,6 +40,34 @@ services:
       - "3000:3000"
     restart: unless-stopped
 
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: lantern-prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: lantern-node-exporter
+    pid: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    ports:
+      - "9100:9100"
+    restart: unless-stopped
+
 volumes:
   loki-data:
   grafana-data:
+  prometheus-data:

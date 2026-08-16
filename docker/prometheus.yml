@@ -1,0 +1,30 @@
+# Minimal Prometheus config for the standalone Docker stack. Scrapes itself
+# and node-exporter (host-level CPU/memory/disk/network) out of the box.
+#
+# Per-container resource metrics (the cAdvisor path) are intentionally not
+# included here -- see docker/README.md's "Why no per-container metrics"
+# section for why, verified on this exact class of rootless Docker install
+# rather than assumed.
+#
+# To scrape your OWN service, add a job here pointing at its container name
+# and the port it exposes a Prometheus-format /metrics endpoint on:
+#
+#   - job_name: my-service
+#     static_configs:
+#       - targets: ['my-service:9000']
+#
+# Compose puts every service on the same default network, so container names
+# resolve as hostnames -- no extra networking config needed.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: node
+    static_configs:
+      - targets: ['node-exporter:9100']
