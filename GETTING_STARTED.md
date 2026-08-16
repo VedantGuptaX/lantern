@@ -469,6 +469,10 @@ kubectl get servicemonitor -n shop
 
 # the rules loaded (an invalid rule file makes Prometheus reject ALL of them)
 kubectl get prometheusrule -n shop -o yaml | head -40
+
+# the per-service dashboard ConfigMap was generated and labeled for the
+# Grafana sidecar to pick up
+kubectl get cm -n shop -l grafana_dashboard=1
 ```
 
 Then port-forward Grafana:
@@ -478,12 +482,22 @@ kubectl port-forward -n observability svc/lantern-grafana 3000:80
 # default quickstart login: admin / lantern
 ```
 
-You will find kube-prometheus-stack's cluster and node dashboards, your traces
-in Tempo, your logs in Loki, and Lantern's burn-rate alerts under **Alerting →
-Alert rules**.
+Open <http://localhost:3000>. You will find kube-prometheus-stack's cluster
+and node dashboards, a per-service Lantern dashboard for each
+`ServiceObservability` (burn-rate + error-budget panels reusing the exact
+recording rules that drive the alerts, plus Logs and Traces panels), your
+logs in Loki, and Lantern's burn-rate alerts under **Alerting → Alert
+rules**.
 
-> **You will not find a per-service Lantern dashboard.** Dashboard generation
-> is the next milestone and is not built. See [Project status](README.md#project-status).
+> **Traces need one more piece if `instrumentation.mode: ebpf`.** Lantern's
+> `mode: ebpf` is a compiler decision, not a deployed probe — nothing in this
+> chart installs the actual eBPF instrumentation agent (OBI/Beyla) that would
+> push spans to the collector. If a service resolved to eBPF mode, its Traces
+> panel will correctly show no data until that probe is installed (or the
+> service is switched to `mode: agent`/`sdk`). See
+> [docs/getting-signals-into-grafana.md](docs/getting-signals-into-grafana.md)
+> for the three options. Metrics and logs (once `logsCollector.enabled`) work
+> regardless of instrumentation mode.
 
 ---
 
