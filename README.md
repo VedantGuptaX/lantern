@@ -11,7 +11,7 @@ Prometheus scrape config, and SLO burn-rate alerts.
 [![Go](https://img.shields.io/badge/go-1.24+-00ADD8.svg)](https://go.dev)
 [![Status](https://img.shields.io/badge/status-alpha%20(P0)-orange.svg)](#project-status)
 
-[Getting Started](GETTING_STARTED.md) · [Design](DESIGN.md) · [Contributing](CONTRIBUTING.md) · [Adopting on a live cluster](docs/adopting-an-existing-cluster.md) · [GPU & inference observability](docs/gpu-and-inference-observability.md) · [Roadmap](plan.md)
+[Getting Started](GETTING_STARTED.md) · [Design](DESIGN.md) · [Contributing](CONTRIBUTING.md) · [Adopting on a live cluster](docs/adopting-an-existing-cluster.md) · [GPU & inference observability](docs/gpu-and-inference-observability.md) · [Setting up with an AI agent](agent_handoff.md) · [Roadmap](plan.md)
 
 </div>
 
@@ -117,8 +117,48 @@ single easiest thing to get subtly wrong, and a subtly wrong alert is worse
 than no alert at all — it gives you false confidence instead of a page.
 
 The same compiler, same burn-rate math, and same "no PromQL by hand" promise
-also covers GPU-backed inference servers (vLLM, Triton, NIM, ...) — see
-[GPU & inference observability](docs/gpu-and-inference-observability.md).
+also covers GPU-backed inference servers (vLLM, Triton, NIM, TGI, ...). There
+is no OTel semantic convention for time-to-first-token or inter-token
+latency the way there is for `http.server.request.duration`, so instead of
+guessing wrong and shipping an alert that never fires, `serviceKind:
+inference` makes you name the metric once, then gets the same burn-rate
+machinery every other SLO type gets — for free:
+
+```yaml
+apiVersion: lantern.dev/v1alpha1
+kind: ServiceObservability
+metadata:
+  name: llama-70b-server
+  namespace: ml
+spec:
+  target: { kind: Deployment, name: llama-70b-server, metricsPort: metrics }
+  serviceKind: inference
+  team: ml-platform
+  slos:
+    - name: ttft
+      type: latency
+      metric: vllm:time_to_first_token_seconds   # histogram, no _bucket/_count suffix
+      objective: 99.0
+      threshold: 500ms
+      window: 7d
+    - name: inter-token-latency
+      type: latency
+      metric: vllm:time_per_output_token_seconds
+      objective: 99.0
+      threshold: 50ms
+      window: 7d
+  instrumentation:
+    mode: none   # the app exports its own Prometheus metrics; no agent needed
+```
+
+GPU **node** health (utilization, temperature, power, ECC/XID errors) is a
+separate, cluster-level concern from a specific inference server's SLOs —
+it goes through the chart's `gpuMonitoring` toggle instead of a spec, wired
+to `dcgm-exporter` you already run. See
+[GPU & inference observability](docs/gpu-and-inference-observability.md) for
+the full picture, including saturation SLOs that combine both (e.g. "page me
+if GPU memory utilization stays above 90% for the request queue depth this
+service is actually seeing").
 
 ## Already running services? Don't write specs by hand
 
@@ -232,7 +272,7 @@ together, dashboards included.
 | **Quickstart, metrics + dashboards only** (no logs, no traces) | ~435m vCPU / ~1.2Gi RAM combined, from the table above minus the logs/traces/OBI rows. |
 | **Quickstart, full stack** (metrics + logs + traces) | ~595m vCPU / ~2.3Gi RAM combined, measured as above. This is tighter than the old "~1.5 vCPU / 2.5Gi" estimate suggested — that number was never wrong, it was just for a much smaller slice of what the quickstart now includes. |
 | **Storage** | ~10–20Gi of PVC if you enable persistent storage for Loki/Tempo. The quickstart defaults to ephemeral filesystem storage — no PVC, but log/trace data is lost on pod restart. Fine for evaluation, not for anything you'd want to keep. |
-| **GPU / DCGM monitoring** | ~0 additional — `gpuMonitoring.enabled` only adds a `ServiceMonitor` and a `PrometheusRule` (two Kubernetes objects, not a workload). It assumes `dcgm-exporter` is already running via the NVIDIA GPU Operator; that DaemonSet's own resource footprint is separate infrastructure Lantern doesn't install or size for you. |
+| **GPU / DCGM monitoring (Lantern's own footprint)** | ~0 additional — `gpuMonitoring.enabled` only adds a `ServiceMonitor` and a `PrometheusRule` (two Kubernetes objects, not a workload). |
 
 `./scripts/preflight-check.sh` computes your cluster's actual free capacity
 against these numbers before you install anything. On a genuinely tight
@@ -240,6 +280,26 @@ cluster (this one had well under 200m CPU free across both nodes combined
 by the time the full stack went in), expect to actually hit that math, not
 just clear it comfortably — plan accordingly rather than assuming "quickstart"
 means "always fits."
+
+### GPU node prerequisites (NVIDIA GPU Operator / DCGM — not installed by Lantern)
+
+`gpuMonitoring.enabled` assumes the NVIDIA GPU Operator (which includes
+`dcgm-exporter`) is already running on your GPU nodes — that's separate
+infrastructure this project doesn't install or manage, so budget for it
+before turning the toggle on. Real numbers where NVIDIA publishes them,
+honest gaps where they don't — this project's own rule ("never guess at a
+number it can't verify") applies here too, not just to PromQL:
+
+| Component | CPU request | Mem request | Source |
+|---|---|---|---|
+| `dcgm-exporter` alone | 10–100m | 128Mi–512Mi (limit up to 1Gi) | [NVIDIA GPU Operator `ClusterPolicy` docs](https://docs.nvidia.com/datacenter/cloud-native/gpu-telemetry/latest/dcgm-exporter.html) — varies with how many DCGM fields you collect; the default field list is the main lever if you need to trim it |
+| `nvidia-driver-daemonset` | ~100m | ~128Mi (limit ~1 CPU / 2Gi) | [NVIDIA GPU Operator docs](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html) — this is the installer process, not the driver itself (the driver is just files on the host once installed); expect a real, temporary CPU spike during the initial driver load on each node, not just this steady-state number |
+| Device plugin, container toolkit, GPU/node-feature-discovery, the operator itself (5 more components) | **Not officially documented** | **Not officially documented** | NVIDIA doesn't publish per-component sizing for the rest of the 8-component stack. Don't trust a number here from anywhere that isn't NVIDIA's own docs or your own `kubectl top` after a real install — this table won't invent one either. |
+
+Practical takeaway: `dcgm-exporter` itself is cheap and predictable enough to
+plan around. The other 7 components of the GPU Operator stack are not —
+measure them for real on your own GPU nodes before assuming a number, the
+same discipline this project asks of you for PromQL metric names.
 
 ## Not installing this blind — the preflight check
 
@@ -292,6 +352,24 @@ No external Go modules — the whole thing builds with the standard library. Go
 1.24 or later.
 
 Full walkthrough: **[GETTING_STARTED.md](GETTING_STARTED.md)**
+
+## Setting this up with an AI coding agent
+
+If you're using Cursor, Claude Code, or another AI coding agent to help set
+Lantern up — either for yourself, or you *are* that agent reading this on
+someone else's behalf — start with **[agent_handoff.md](agent_handoff.md)**
+instead of jumping straight to `helm install`. It's short, and it's the
+difference between an agent that follows this project's safety discipline
+(preflight before install, diff before apply, one service at a time for
+instrumentation injection) and one that finds out why those rules exist by
+breaking something first.
+
+It exists because this project's own setup was verified end-to-end by an AI
+agent against a real, populated cluster, and every real problem hit along
+the way — a chart bug, a capacity miscalculation, an unreviewed guess
+applied too broadly — came from skipping a step this project already tells
+you not to skip. `agent_handoff.md` is that experience written down so the
+next agent doesn't have to rediscover it.
 
 ## Project status
 
