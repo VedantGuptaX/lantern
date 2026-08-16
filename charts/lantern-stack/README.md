@@ -90,32 +90,116 @@ for the full picture, including the equivalent gap for traces (eBPF mode
 needs a probe Lantern does not install) and how the compiler's generated
 dashboards use all of this.
 
-## Status: `helm template` verified against a real cluster; not yet installed
+## Dashboards — generated automatically once datasources are configured
 
-`helm dependency update`, `helm lint`, and `helm template` have all been run
-for real (not just checked by hand) against `values-quickstart.yaml`, on the
-bastion session that also validated the rest of Lantern against a live AKS
-cluster — see `plan.md`'s findings log for the two rounds that got it there.
-Actually installing this chart into a running cluster (`helm install`) has
-still never happened.
+The compiler emits a per-service Grafana dashboard (`pkg/emit/grafana`) for
+every `ServiceObservability`, gated on `backends.dashboards.type: grafana`
+(the default) and picked up by the Grafana sidecar this chart already
+enables (`ConfigMap` labeled `grafana_dashboard: "1"`). Panels reuse the
+exact recording rules that drive the burn-rate alerts, so the dashboard and
+the alert can never disagree.
 
-Two real problems surfaced along the way, both fixed and re-verified:
+**`backends.{metrics,traces,logs}.datasource` have to actually match what's
+provisioned, or panels render skipped, not broken-looking.**
+`values-quickstart.yaml` sets these to `prometheus` / `tempo-main` /
+`loki-main` to match kube-prometheus-stack's own Grafana datasource UID and
+the `additionalDataSources` block further down in the same file — checked
+against the chart source directly, not assumed (a real bug here — Tempo's
+URL pointed at Loki's port, copy-pasted from the entry next to it — cost a
+silent `502` on every trace query until it was found and fixed). If you're
+on the bring-your-own path, these default to empty; set them to your own
+Grafana's real datasource UIDs.
+
+## Traces — bring your own eBPF probe (or SDK agent)
+
+`instrumentation.ebpf.enabled` and `mode: ebpf` are compiler-side decisions;
+neither this chart nor the compiler deploys the actual eBPF probe that
+generates spans. Nothing in `charts/lantern-stack/templates/` runs
+OBI/Beyla. Once you install one yourself pointed at
+`http://<release>-collector.<namespace>.svc:4317`, traces work end-to-end —
+verified for real, not just wired up: real spans confirmed reaching Tempo
+and rendering in Grafana through its actual datasource proxy. See
+[docs/getting-signals-into-grafana.md](../../docs/getting-signals-into-grafana.md)
+for a working values example and four real gotchas (memory sizing for the
+eBPF maps, the `/sys/fs/bpf` hostPath mount HTTP/gRPC tracing actually needs,
+why the narrowed-capability path may not fully work, and the
+`hostNetwork` tradeoff `contextPropagation.enabled` pulls in).
+
+## Status: verified end-to-end against a real, populated AKS cluster
+
+`helm install`/`helm upgrade` have run repeatedly against a real AKS cluster
+running real multi-namespace workloads — not just `helm template`/`helm
+lint`, and not just `kind` fixtures. Metrics, logs, traces, and generated
+dashboards all confirmed working with real data by the end of that
+verification: real Prometheus queries returning real values, real log lines
+from real services in Loki, real spans in Tempo rendered through Grafana's
+own proxy. `scripts/verify-kind.sh` — the disposable local-cluster rehearsal
+— still hasn't run in an environment with `kind`/Docker available; real
+cluster verification happened instead, which exercises real capacity
+pressure and real RBAC in a way `kind` fixtures don't, but isn't a
+substitute for the fast, no-blast-radius loop `verify-kind.sh` is meant to
+give contributors.
+
+Real problems found this way, all fixed and re-verified against the same
+cluster they were found on:
 
 - **Grafana's Loki and Tempo charts moved repositories** on 30 January 2026,
   from `grafana/helm-charts` to `grafana-community/helm-charts`. The old URL
   still serves archived versions but gets no new releases.
-- **Loki jumped from 6.55.0 to the 17/18 series** — twelve majors of breaking
-  changes, and the actual default deployment mode is `SimpleScalable`, not
-  "Monolithic" (that mode name doesn't exist in this chart at all — confirmed
-  directly against the chart source, after an earlier version of this README
-  got it wrong). `SimpleScalable` needs object storage this chart doesn't
-  configure, and pinning `deploymentMode: SingleBinary` alone isn't enough
-  either — the `write`/`read`/`backend` replica counts default to 3 each
-  regardless of `deploymentMode`, so those need zeroing too. Both are done in
-  `values-quickstart.yaml`, and `helm template`'s output is confirmed to be a
-  single StatefulSet, not three read/write/backend workloads. If Loki still
-  gives you trouble, `--set loki.enabled=false` and carry on — metrics,
-  traces, instrumentation and alerts do not depend on it (logs obviously do).
+- **Loki's actual default deployment mode is `SimpleScalable`**, which needs
+  object storage this chart doesn't configure. Pinning
+  `deploymentMode: SingleBinary` alone isn't enough either — the
+  `write`/`read`/`backend` replica counts default to 3 each regardless of
+  `deploymentMode`, so those need zeroing too. Both are done in
+  `values-quickstart.yaml`; confirmed the rendered output is a single
+  StatefulSet, not three read/write/backend workloads.
+- **Tempo's default receiver list includes `opencensus`**, a receiver type
+  the pinned Tempo image dropped years ago — crashed on every start. Helm
+  values merging can't delete an inherited map key, so the fix overrides the
+  whole templated `config` string with `opencensus` excluded, not just the
+  `receivers` map.
+- **The OTel Operator subchart assumes cert-manager**
+  (`admissionWebhooks.certManager.enabled: true` upstream), which most
+  clusters adopting Lantern for the first time don't have. Its own
+  self-signed-cert fallback also regenerates on every `helm upgrade` by
+  default, with nothing restarting the pod serving the old cert — a real
+  `helm upgrade` immediately after a clean install failed with "certificate
+  signed by unknown authority" every time after that, forever, once it
+  happened once. Both defaulted off/false in `values.yaml`.
+- **The `OpenTelemetryCollector` CRD ships as a regular template**, not in
+  Helm's special `crds/` directory, so on a genuinely fresh cluster it lands
+  in the same apply batch as this chart's own `OpenTelemetryCollector`
+  custom resources — which fails the whole install outright. Both
+  `collector.yaml` and `logs-collector.yaml` now gate their CR on
+  `.Capabilities.APIVersions.Has` (see `lantern.otelCollectorCRDReady` in
+  `_helpers.tpl`), skipping gracefully on first install instead of failing;
+  `make install-quickstart`/`install-byo` run the necessary follow-up
+  `helm upgrade` automatically.
+- **The in-cluster CRD-ownership preflight hook blocked every genuinely
+  fresh install**, unconditionally. Helm's `crds/` mechanism never stamps an
+  ownership annotation — not on a foreign install, and not on this
+  release's own brand-new CRDs either — so "no annotation" was never
+  reliable evidence of a conflict on its own. The hook (and
+  `scripts/preflight-check.sh`) now additionally check whether the CRD
+  actually has real custom-resource instances under it; an empty CRD has
+  nothing to conflict with regardless of who "owns" the definition.
+- **`logsCollector` shipped with `start_at: beginning`**, replaying a node's
+  entire log history — every system pod included, not just app workloads —
+  on every restart of the collector itself, not just its first start. On a
+  real cluster this blew through Loki's own ingestion rate limit and
+  out-of-order rejection window, and because the backlog and live traffic
+  share the same send queue, real current log lines got delayed/dropped
+  behind the backlog storm too. Now `start_at: end`, the correct setting for
+  a persistent tailing daemon. Its default resources (100Mi/200Mi) were also
+  too small for real application logs — the `memory_limiter` processor
+  silently rejected log batches for any service verbose enough to log full
+  SQL query text, with no error visible anywhere except the collector's own
+  pod logs. Raised to 256Mi/512Mi in `values.yaml`.
+
+If Loki (or Tempo) still gives you trouble on a capacity-constrained
+cluster, `--set loki.enabled=false` / `--set tempo.enabled=false` and carry
+on — metrics, instrumentation, and alerts don't depend on either (logs need
+Loki, traces need Tempo, obviously).
 
 To verify:
 
@@ -128,5 +212,12 @@ or by hand:
 ```bash
 helm dependency update charts/lantern-stack
 helm lint charts/lantern-stack
-helm template lantern charts/lantern-stack -f charts/lantern-stack/values-quickstart.yaml
+helm template lantern charts/lantern-stack -f charts/lantern-stack/values-quickstart.yaml --validate
 ```
+
+`make preflight` (100% read-only) computes real free capacity against the
+[resource requirements table in the top-level README](../../README.md#resource-requirements)
+before `make install-quickstart`/`install-byo` will call `helm install` at
+all — every subchart here ships with zero default resource requests unless
+this chart's own values files set one explicitly, so don't treat a
+successful `helm install` as proof of a correctly-sized deployment.
