@@ -43,10 +43,18 @@ dependencies:
   # dependencies below point at the new location.
   #
   # The version jump is not cosmetic: Loki went from 6.55.0 to the 17/18 series,
-  # spanning twelve majors of breaking changes. The default deployment mode
-  # changed from SimpleScalable to Monolithic, Enterprise support was removed,
-  # and the built-in MinIO is deprecated. Treat the Loki values as the least
-  # trustworthy part of this chart until someone runs it.
+  # spanning twelve majors of breaking changes. CORRECTION (found by running
+  # this for real against a live cluster): the 17/18 series still defaults
+  # `deploymentMode` to SimpleScalable, not "Monolithic" — that mode name
+  # doesn't exist in this chart at all (the three real options are
+  # SingleBinary, SimpleScalable, Distributed). SimpleScalable REQUIRES object
+  # storage, which this chart's `values-quickstart.yaml` does not configure,
+  # so an unmodified install fails outright. `values-quickstart.yaml` now
+  # pins `deploymentMode: SingleBinary` explicitly (plus `singleBinary.
+  # replicas: 1`, since that also defaults to 0) — see the comment there.
+  # Enterprise support was removed and the built-in MinIO is deprecated in
+  # this series. Treat the Loki values as the least trustworthy part of this
+  # chart until `helm template`/`helm lint` has actually been run.
   - name: tempo
     version: "2.2.1"
     repository: https://grafana-community.github.io/helm-charts

@@ -124,6 +124,90 @@ func TestMultiDocument(t *testing.T) {
 	}
 }
 
+// TestFoldedPlainScalarContinuation reproduces the exact failure seen parsing
+// real `kubectl -o yaml` output: a long plain scalar (a Deployment status
+// condition's `message` field) that the encoder wraps onto a second,
+// deeper-indented line. Per YAML's grammar this can only be a continuation of
+// the scalar, not a nested structure, so it must fold with a single space
+// rather than error.
+func TestFoldedPlainScalarContinuation(t *testing.T) {
+	src := []byte(`status:
+  conditions:
+    - type: Available
+      status: "True"
+      message: Deployment does not have minimum availability. Deployment has minimum
+        availability requirement of 1 replicas but only 0 are available.
+      reason: MinimumReplicasUnavailable
+`)
+	m, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	status := m.(map[string]any)["status"].(map[string]any)
+	conditions := status["conditions"].([]any)
+	cond := conditions[0].(map[string]any)
+	want := "Deployment does not have minimum availability. Deployment has minimum availability requirement of 1 replicas but only 0 are available."
+	if cond["message"] != want {
+		t.Errorf("message = %q, want %q", cond["message"], want)
+	}
+	if cond["reason"] != "MinimumReplicasUnavailable" {
+		t.Errorf("parsing did not resume correctly after the folded scalar: %#v", cond)
+	}
+}
+
+// TestFoldedQuotedScalarContinuation covers a quoted scalar wrapped across
+// lines, not just a plain one.
+func TestFoldedQuotedScalarContinuation(t *testing.T) {
+	src := []byte("message: \"first part of a long quoted message that got\n  wrapped onto a second line by an encoder\"\nnext: after\n")
+	m, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	mm := m.(map[string]any)
+	want := "first part of a long quoted message that got wrapped onto a second line by an encoder"
+	if mm["message"] != want {
+		t.Errorf("message = %q, want %q", mm["message"], want)
+	}
+	if mm["next"] != "after" {
+		t.Errorf("parsing did not resume after the folded quoted scalar: %#v", mm)
+	}
+}
+
+// TestFoldedSequenceItemContinuation covers the analogous fold for a plain
+// scalar sequence item (`- value`), not just a map value.
+func TestFoldedSequenceItemContinuation(t *testing.T) {
+	src := []byte(`items:
+  - this is a long sequence item that got
+    wrapped onto a second line
+  - short
+`)
+	m, err := Parse(src)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	items := m.(map[string]any)["items"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("items = %#v, want 2 entries", items)
+	}
+	if items[0] != "this is a long sequence item that got wrapped onto a second line" {
+		t.Errorf("items[0] = %q", items[0])
+	}
+	if items[1] != "short" {
+		t.Errorf("items[1] = %q", items[1])
+	}
+}
+
+// TestFoldedScalarDoesNotSwallowFlowCollection guards against the fold logic
+// over-reaching: a flow collection is always complete on its starting line in
+// this subset, so a deeper-indented line right after one is a real error
+// (unsupported multi-line flow), not a continuation.
+func TestFoldedScalarDoesNotSwallowFlowCollection(t *testing.T) {
+	src := []byte("a: {x: 1}\n  stray: continuation\n")
+	if _, err := Parse(src); err == nil {
+		t.Error("a deeper-indented line after a flow mapping must still error, not be folded into it")
+	}
+}
+
 func TestUnsupportedFeaturesAreRejectedLoudly(t *testing.T) {
 	// Silently mishandling an anchor would corrupt a user's config. Failing is
 	// the correct behaviour for an intentionally partial parser.

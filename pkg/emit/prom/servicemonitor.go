@@ -35,9 +35,17 @@ func BuildServiceMonitor(in MonitorInput) (*kube.Object, []Diagnostic, error) {
 	port := in.Port
 	if port == "" {
 		port = "metrics"
+		// This is a guess with zero evidence behind it — Lantern has no
+		// cluster access to check whether the target Service actually has a
+		// port named "metrics" (see the compiler's I/O-free boundary). Get
+		// this wrong and the ServiceMonitor scrapes nothing, silently: no
+		// error, no missing resource, just an empty target list that looks
+		// identical to "everything is fine" until someone checks Prometheus's
+		// target page. That risk belongs at "warn" so `-strict` catches it,
+		// not "info" where it reads as routine.
 		diags = append(diags, Diagnostic{
-			Level:   "info",
-			Message: fmt.Sprintf("no target.metricsPort set, defaulting to port name %q", port),
+			Level:   "warn",
+			Message: fmt.Sprintf("target.metricsPort not set; guessing port name %q with no evidence it exists on the target Service — verify it exists (kubectl get svc -o yaml) or set target.metricsPort explicitly, or this ServiceMonitor may scrape nothing", port),
 		})
 	}
 	interval := in.Interval
