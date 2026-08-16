@@ -120,6 +120,20 @@ loki:
     # The chart's own default is 0 replicas even in SingleBinary mode — it
     # deploys nothing until this is set explicitly.
     replicas: 1
+  # `deploymentMode` alone does not zero out the SimpleScalable target's own
+  # replica counts — write/read/backend default to 3 each *regardless* of
+  # deploymentMode (confirmed against the chart's own values.yaml and its
+  # templates/validate.yaml, which fails the render if singleBinary.replicas
+  # and any of these are both > 0: "more than zero replicas configured for
+  # both the single binary and simple scalable targets"). Found by actually
+  # running `helm template` against a real cluster — setting deploymentMode
+  # without this looks correct but still fails at render time.
+  write:
+    replicas: 0
+  read:
+    replicas: 0
+  backend:
+    replicas: 0
   loki:
     auth_enabled: false
     commonConfig:

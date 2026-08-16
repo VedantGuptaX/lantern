@@ -52,9 +52,19 @@ dependencies:
   # so an unmodified install fails outright. `values-quickstart.yaml` now
   # pins `deploymentMode: SingleBinary` explicitly (plus `singleBinary.
   # replicas: 1`, since that also defaults to 0) — see the comment there.
+  #
+  # SECOND CORRECTION (found by actually running `helm template` against a
+  # real cluster, after the fix above looked complete): pinning
+  # `deploymentMode` alone does not zero out the SimpleScalable target's own
+  # replica counts — `write`/`read`/`backend` default to 3 each regardless of
+  # `deploymentMode`, and the chart's own `templates/validate.yaml` fails the
+  # render if `singleBinary.replicas` and any of those are both > 0.
+  # `values-quickstart.yaml` now zeroes all three explicitly too. Confirmed
+  # against the chart's real `templates/validate.yaml` logic, not just the
+  # error message.
+  #
   # Enterprise support was removed and the built-in MinIO is deprecated in
-  # this series. Treat the Loki values as the least trustworthy part of this
-  # chart until `helm template`/`helm lint` has actually been run.
+  # this series.
   - name: tempo
     version: "2.2.1"
     repository: https://grafana-community.github.io/helm-charts
