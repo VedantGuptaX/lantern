@@ -1,4 +1,4 @@
-{{- if .Values.collector.enabled }}
+{{- if and .Values.collector.enabled (include "lantern.otelCollectorCRDReady" .) }}
 {{/*
 The collector every injected agent exports to.
 
@@ -8,7 +8,8 @@ was configured but never actually flowed. This closes that gap.
 
 It is an OpenTelemetryCollector custom resource, so it requires the
 OpenTelemetry Operator. Enable the subchart, or install the operator yourself
-before enabling this.
+before enabling this. See lantern.otelCollectorCRDReady in _helpers.tpl for
+why this is also gated on the CRD actually being registered yet.
 */}}
 apiVersion: opentelemetry.io/v1beta1
 kind: OpenTelemetryCollector

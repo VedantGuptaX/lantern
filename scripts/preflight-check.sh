@@ -15,6 +15,15 @@
 #
 # It touches nothing. Every command below is `get`/`describe`/`auth can-i`.
 #
+# An absent Helm ownership annotation on a CRD is NOT proof of a foreign
+# install by itself — Helm's crds/ mechanism never annotates CRDs, including
+# this release's own leftover residue from an earlier aborted attempt. When
+# the annotation is missing, this script additionally counts existing custom
+# resource instances under that CRD: zero means nothing to conflict with
+# regardless of who owns the definition; a real count means something is
+# actually in use and blocks as before. Found and fixed after this exact
+# ambiguity produced a false BLOCK on a genuinely clean, correct install.
+#
 # Exit codes:
 #   0  clean, or warnings only
 #   1  missing tools / cannot reach the cluster
@@ -120,13 +129,42 @@ check_crd_group() {
     managed_by=$(kubectl get crd "$crd" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/managed-by}' 2>/dev/null)
     versions=$(kubectl get crd "$crd" -o jsonpath='{.spec.versions[*].name}' 2>/dev/null)
 
-    if [ -z "$owner_name" ] && [ -z "$managed_by" ]; then
-      block "$crd exists, installed by something other than Helm (raw manifest, an operator lifecycle manager, etc). served versions: [$versions]"
-      say "     -> Helm will SKIP this CRD rather than manage it. The controller Lantern installs"
-      say "        will run against whatever schema is already there. Confirm compatibility before"
-      say "        proceeding, or point Lantern at the existing controller instead of installing a new one."
-    elif [ "$owner_name" = "$RELEASE" ] && [ "$owner_ns" = "$NAMESPACE" ]; then
+    if [ "$owner_name" = "$RELEASE" ] && [ "$owner_ns" = "$NAMESPACE" ]; then
       pass "$crd already owned by this release ($RELEASE/$NAMESPACE) — this is just an upgrade"
+      continue
+    fi
+
+    if [ -z "$owner_name" ] && [ -z "$managed_by" ]; then
+      # No ownership annotation/label is NOT proof of a foreign install on
+      # its own: Helm's crds/ mechanism (how kube-prometheus-stack and the
+      # OTel Operator ship these) never stamps one, even for a chart's own
+      # CRDs — including leftover residue from THIS release's own earlier,
+      # aborted attempt. The only reliable signal is whether the CRD already
+      # has real custom resources under it: nothing to lose, or something
+      # real that could get clobbered.
+      local resource group instance_output instance_count
+      resource="${crd%%.*}"
+      group="${crd#*.}"
+      instance_output=$(kubectl get "$resource.$group" --all-namespaces -o name 2>&1)
+      if [ $? -ne 0 ]; then
+        instance_count=-1
+      elif [ -z "$instance_output" ]; then
+        instance_count=0
+      else
+        instance_count=$(printf '%s\n' "$instance_output" | wc -l | tr -d ' ')
+      fi
+
+      if [ "$instance_count" -eq 0 ] 2>/dev/null; then
+        pass "$crd exists with no Helm ownership annotation, but zero custom resources under it — nothing to conflict with"
+      elif [ "$instance_count" -lt 0 ] 2>/dev/null; then
+        block "$crd exists and its custom resources could not be listed (RBAC or API error) — cannot confirm it's safe. served versions: [$versions]"
+        say "     -> re-run with a kubeconfig that can list $group resources, or investigate manually."
+      else
+        block "$crd exists, installed by something other than Helm (raw manifest, an operator lifecycle manager, etc), and already has $instance_count custom resource(s) under it. served versions: [$versions]"
+        say "     -> Helm will SKIP this CRD rather than manage it. The controller Lantern installs"
+        say "        will run against whatever schema is already there. Confirm compatibility before"
+        say "        proceeding, or point Lantern at the existing controller instead of installing a new one."
+      fi
     else
       block "$crd exists, owned by Helm release '${owner_name:-unknown}' in namespace '${owner_ns:-unknown}' — NOT this install"
       say "     -> installing $group_name here will not touch this CRD (Helm skips it), but the new"

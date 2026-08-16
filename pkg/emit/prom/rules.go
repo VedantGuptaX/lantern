@@ -168,17 +168,17 @@ func metadataGroup(sloID string, objective, errorBudget float64, window string, 
 	rules := yamlx.NewSeq(
 		yamlx.NewMap(
 			"record", yamlx.S("lantern:objective:ratio"),
-			"expr", yamlx.Raw(trimFloat(objective/100)),
+			"expr", yamlx.S(trimFloat(objective/100)),
 			"labels", labelsWith(common, nil),
 		),
 		yamlx.NewMap(
 			"record", yamlx.S("lantern:error_budget:ratio"),
-			"expr", yamlx.Raw(trimFloat(errorBudget)),
+			"expr", yamlx.S(trimFloat(errorBudget)),
 			"labels", labelsWith(common, nil),
 		),
 		yamlx.NewMap(
 			"record", yamlx.S("lantern:time_period:days"),
-			"expr", yamlx.Raw(trimFloat(days.Hours()/24)),
+			"expr", yamlx.S(trimFloat(days.Hours()/24)),
 			"labels", labelsWith(common, nil),
 		),
 		yamlx.NewMap(

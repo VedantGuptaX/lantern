@@ -16,15 +16,54 @@ Cloud-agnostic — AKS, EKS, GKE, on-prem. Swap the placeholder values for yours
 
 ## Step 0 — rehearse locally, not on the shared cluster
 
-Before touching AKS, run the whole flow against a throwaway `kind` cluster so
-the first time you see a failure isn't on infrastructure other people depend
-on:
+### Bastion prerequisites
+
+Check these before anything else — a bastion image is not guaranteed to match
+a dev laptop, and finding a missing tool mid-runbook is worse than finding it
+now:
+
+```bash
+kubectl version --client   # authenticated against the target cluster already?
+go version                 # matches go.mod's version?
+which make jq
+which yq                   # used by the canary-extraction command in Step 4b
+which docker || which kind # see below if neither is present
+sudo -n true 2>/dev/null && echo "passwordless sudo available"
+```
+
+`kubectl` should already be authenticated via `az login`/`kubelogin` (or your
+cloud's equivalent) run locally on the bastion — never hand credentials or
+kubeconfig contents to a chat session; see `CLAUDE.md`'s non-negotiable rules.
+
+Before touching the shared cluster, run the whole flow against a throwaway
+`kind` cluster so the first time you see a failure isn't on infrastructure
+other people depend on:
 
 ```bash
 ./scripts/verify-kind.sh
 ```
 
 If that hasn't been run successfully at least once, don't proceed to Step 1.
+
+**No `docker`/`kind` on this bastion?** Some locked-down bastions genuinely
+don't have either, and installing one may not be an option you control. This
+is a real gap — `verify-kind.sh` is the only check that exercises a real
+install end to end — but there's a partial substitute that still catches most
+of what matters:
+
+```bash
+go build ./... && go test ./...      # the compiler itself, fully covered
+helm lint charts/lantern-stack --values charts/lantern-stack/values-quickstart.yaml
+helm template charts/lantern-stack --values charts/lantern-stack/values-quickstart.yaml \
+  | kubectl apply --dry-run=client -f -   # server-side-free manifest validation
+```
+
+This proves the Go code is correct and the Helm chart renders valid,
+schema-conformant Kubernetes objects — it does **not** prove the chart
+actually installs (dependency resolution, CRD ordering, and runtime behavior
+are exactly what `kind` would catch and this can't). Treat this as "rehearsal
+skipped, partial substitute run," not as equivalent to Step 0 passing, and say
+so explicitly in any handoff.
 
 ---
 
@@ -199,6 +238,30 @@ Once the canary is stable, expand in waves — by team, or by criticality, never
 "everything" in one apply. A reasonable cadence: canary → same team's other
 services → one more team → the rest, each wave separated by at least a day.
 
+**All services resolved to eBPF mode, not agent injection?** The staging
+procedure above has nothing to operate on in that case — eBPF instrumentation
+attaches at the node level via the OTel Operator's eBPF profiling support, not
+through a per-Deployment annotation, so there's no `inject-*` annotation to
+extract and no single Deployment patch to canary. Stage it at the node level
+instead:
+
+1. Confirm `instrumentation.ebpf.enabled` is actually on for only as many
+   nodes as you intend to canary — if the cluster uses node pools, target the
+   eBPF DaemonSet at one pool first (a nodeSelector/affinity on the generated
+   DaemonSet, not a Lantern-generated object) rather than letting it schedule
+   cluster-wide on first apply.
+2. Watch node-level signals, not pod-level ones: `kubectl top nodes` for CPU
+   overhead from the eBPF collector, and `dmesg`/kernel logs on the target
+   nodes for anything unexpected — eBPF programs run in kernel space, so a bad
+   interaction shows up there before it shows up in a workload's own logs.
+3. Once that node pool is stable, expand pool by pool the same way you'd
+   expand team by team above — never flip it cluster-wide in one apply.
+
+If the cluster only has one node pool, there's no way to stage this
+sub-cluster — treat the whole eBPF rollout as a single higher-risk canary
+step, soak it longer than a day, and make sure whoever owns the cluster knows
+before you flip it on.
+
 ---
 
 ## Step 5 — rollback
@@ -247,6 +310,20 @@ spec:
 
 Start every service's trace sampling low (`samplingRate: 0.05`–`0.1`) and turn
 it up once you've confirmed the collector and backend can absorb the volume.
+
+**`requireTeamLabel: true` checks that a team is *present*, not that it's
+real.** `lantern discover -team unassigned` (the example command in Step 3)
+satisfies the check mechanically — every service gets `team: unassigned`,
+which is a non-empty string — without satisfying the point of the check,
+which is that alerts route to someone who'll act on them. Reading every
+`REVIEW` marker in `services.yaml` per Step 3 is what actually closes this
+gap; the policy flag only stops you from forgetting to look, it doesn't do
+the looking for you. Before the first real apply, grep for the placeholder
+team and route each one:
+
+```bash
+grep -B5 'team: unassigned' services.yaml   # every hit needs a real owner
+```
 
 ---
 

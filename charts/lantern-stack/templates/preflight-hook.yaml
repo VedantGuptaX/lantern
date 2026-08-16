@@ -15,6 +15,21 @@ case where someone doesn't.
 
 Only runs when a CRD-owning subchart is actually enabled — there is nothing to
 conflict-check for a pure bring-your-own install.
+
+BUG FOUND ON A REAL FIRST-EVER INSTALL, FIXED HERE: this hook runs AFTER
+Helm's own crds/ step has already created this release's CRDs (that ordering
+is exactly why the hook exists at all — see above), but crds/ objects are, by
+Helm's own design, NEVER stamped with a meta.helm.sh/release-* ownership
+annotation — that is precisely what lets `helm uninstall` leave CRDs (and any
+data under them) alone. That means "no ownership annotation" is NOT reliable
+evidence of a foreign install: it is exactly what THIS release's own CRDs
+look like seconds after their own first-ever install too, on every fresh
+cluster, every time — this hook would have blocked its own genuinely clean,
+correct install unconditionally. The only signal that actually distinguishes
+"nothing to lose" from "something real might get clobbered" is whether any
+custom resource already exists under the CRD — an empty CRD has nothing to
+conflict with regardless of who technically owns the definition. The check
+below verifies that instead of trusting the ownership annotation alone.
 */}}
 {{- if and .Values.preflight.hook.enabled (or (index .Values "kube-prometheus-stack" "enabled") (index .Values "opentelemetry-operator" "enabled")) }}
 apiVersion: v1
@@ -38,6 +53,14 @@ metadata:
 rules:
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
+    verbs: ["get", "list"]
+  # Read-only, scoped to exactly the two API groups this chart's CRD-owning
+  # subcharts (kube-prometheus-stack, opentelemetry-operator) ship — needed
+  # to count existing custom resource instances, since CRD ownership
+  # annotations alone can't tell an empty CRD apart from one already in real
+  # use (see the check.sh comment below).
+  - apiGroups: ["monitoring.coreos.com", "opentelemetry.io"]
+    resources: ["*"]
     verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -92,15 +115,49 @@ data:
         continue
       fi
 
-      if [ -z "$OWNER_NAME" ]; then
-        echo "BLOCK: $crd exists and is not Helm-managed. Helm will SKIP it silently rather"
-        echo "       than error, and the controller this release installs will run against"
-        echo "       whatever schema is already there. Run scripts/preflight-check.sh from"
-        echo "       a machine with kubectl access for the full report, or set"
+      # No matching ownership annotation. That alone does not mean "foreign":
+      # Helm's crds/ mechanism never annotates CRDs, ever, including this
+      # release's own — so this branch is also exactly what a genuinely clean
+      # first-ever install of THIS chart looks like. Count actual custom
+      # resource instances instead: an empty CRD has nothing to conflict
+      # with no matter who "owns" the definition.
+      RESOURCE="${crd%%.*}"
+      GROUP="${crd#*.}"
+      LIST_OUTPUT=$(kubectl get "$RESOURCE.$GROUP" --all-namespaces -o name 2>&1)
+      KUBECTL_EXIT=$?
+      if [ "$KUBECTL_EXIT" -ne 0 ]; then
+        INSTANCE_COUNT=-1
+      elif [ -z "$LIST_OUTPUT" ]; then
+        INSTANCE_COUNT=0
+      else
+        INSTANCE_COUNT=$(printf '%s\n' "$LIST_OUTPUT" | wc -l | tr -d ' ')
+      fi
+
+      if [ "$INSTANCE_COUNT" -eq 0 ] 2>/dev/null; then
+        echo "ok:    $crd exists with no Helm ownership annotation, but has zero custom"
+        echo "       resources under it anywhere on the cluster — nothing to conflict"
+        echo "       with, proceeding. (This is what this release's own crds/-installed"
+        echo "       CRDs look like too — Helm never annotates those.)"
+        continue
+      fi
+
+      if [ "$INSTANCE_COUNT" -lt 0 ] 2>/dev/null; then
+        echo "BLOCK: $crd exists and its custom resource instances could not be listed"
+        echo "       (RBAC or API error) — cannot confirm it's safe. Run"
+        echo "       scripts/preflight-check.sh from a machine with kubectl access for"
+        echo "       the full report, or set preflight.hook.enabled=false to proceed"
+        echo "       anyway if this is expected."
+        BLOCKED=1
+      elif [ -z "$OWNER_NAME" ]; then
+        echo "BLOCK: $crd exists, is not Helm-managed, and already has $INSTANCE_COUNT"
+        echo "       custom resource(s) under it — this is a real, in-use install, not"
+        echo "       just-created residue. Run scripts/preflight-check.sh from a machine"
+        echo "       with kubectl access for the full report, or set"
         echo "       preflight.hook.enabled=false to proceed anyway if this is expected."
         BLOCKED=1
       else
-        echo "BLOCK: $crd exists, owned by Helm release '$OWNER_NAME/$OWNER_NS' — not this one."
+        echo "BLOCK: $crd exists, owned by Helm release '$OWNER_NAME/$OWNER_NS' — not this"
+        echo "       one — and already has $INSTANCE_COUNT custom resource(s) under it."
         echo "       Disable the owning subchart and point stack.yaml at the existing install."
         echo "       See docs/adopting-an-existing-cluster.md. Or set preflight.hook.enabled=false"
         echo "       to proceed anyway if this is expected."

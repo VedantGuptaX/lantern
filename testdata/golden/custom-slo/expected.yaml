@@ -115,21 +115,21 @@ spec:
     - name: lantern-slo-meta-recordings-settlement-worker-freshness
       rules:
         - record: lantern:objective:ratio
-          expr: 0.99
+          expr: "0.99"
           labels:
             lantern_id: settlement-worker-freshness
             lantern_service: settlement-worker
             lantern_slo: freshness
             team: payments
         - record: lantern:error_budget:ratio
-          expr: 0.01
+          expr: "0.01"
           labels:
             lantern_id: settlement-worker-freshness
             lantern_service: settlement-worker
             lantern_slo: freshness
             team: payments
         - record: lantern:time_period:days
-          expr: 7
+          expr: "7"
           labels:
             lantern_id: settlement-worker-freshness
             lantern_service: settlement-worker
@@ -205,3 +205,126 @@ spec:
             summary: settlement-worker is burning its freshness error budget too fast
             description: "SLO \"freshness\" (objective 99% over 7d) is consuming error budget at a rate that exhausts it before the window ends. Burn-rate windows: 2h/1d at 3x, 6h/3d at 1x."
             runbook_url: https://runbooks.internal/slo/settlement-worker-freshness
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lantern-dashboard-settlement-worker
+  namespace: shop
+  labels:
+    grafana_dashboard: "1"
+    lantern.dev/managed: "true"
+    lantern.dev/service: settlement-worker
+    lantern.dev/team: payments
+data:
+  settlement-worker.json: |-
+    {
+      "panels": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-main"
+          },
+          "description": "Recorded by the same rules that drive burn-rate alerts (lantern:sli_error:ratio_rate*, lantern:current_burn_rate:ratio) — this panel and the alert can never disagree.",
+          "gridPos": {
+            "h": 8,
+            "w": 16,
+            "x": 0,
+            "y": 0
+          },
+          "id": 1,
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-main"
+              },
+              "expr": "{__name__=~\"lantern:sli_error:ratio_rate.+\", lantern_id=\"settlement-worker-freshness\"}",
+              "legendFormat": "{{lantern_window}}",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-main"
+              },
+              "expr": "lantern:current_burn_rate:ratio{lantern_id=\"settlement-worker-freshness\"}",
+              "legendFormat": "current burn rate",
+              "refId": "B"
+            }
+          ],
+          "title": "freshness: SLI error ratio by window",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-main"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit"
+            }
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 0
+          },
+          "id": 2,
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-main"
+              },
+              "expr": "lantern:period_error_budget_remaining:ratio{lantern_id=\"settlement-worker-freshness\"}",
+              "refId": "A"
+            }
+          ],
+          "title": "freshness: error budget remaining",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-main"
+          },
+          "description": "Requires Lantern's log-collection DaemonSet (logsCollector.enabled) to actually ship pod logs into Loki — see docs/getting-signals-into-grafana.md. Filtered by namespace=\"shop\", deployment=\"settlement-worker\".",
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 8
+          },
+          "id": 3,
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-main"
+              },
+              "expr": "{namespace=\"shop\", deployment=\"settlement-worker\"}",
+              "refId": "A"
+            }
+          ],
+          "title": "Logs",
+          "type": "logs"
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 39,
+      "tags": [
+        "lantern",
+        "team:payments"
+      ],
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "timezone": "browser",
+      "title": "Lantern: settlement-worker",
+      "uid": "lantern-settlement-worker",
+      "version": 1
+    }

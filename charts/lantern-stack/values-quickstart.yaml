@@ -17,16 +17,39 @@ preflight:
   hook:
     enabled: true
 
+# Datasource UIDs matching what's actually provisioned below: kube-
+# prometheus-stack's own Grafana datasource defaults to uid "prometheus"
+# (checked against its chart source); loki-main/tempo-main match the
+# additionalDataSources block under kube-prometheus-stack.grafana further
+# down. Setting these is what turns on the per-service dashboards this chart
+# now generates (backends.dashboards.type: grafana, already the default) —
+# without them, dashboards render with the SLO/logs/traces panels skipped.
+backends:
+  metrics:
+    datasource: prometheus
+  traces:
+    datasource: tempo-main
+  logs:
+    datasource: loki-main
+
 instrumentation:
   provider: otel-operator
   ebpf:
     # Still off. eBPF needs privileged containers and node access; that should
-    # be a deliberate decision even in a demo.
+    # be a deliberate decision even in a demo. Turning this on here does NOT
+    # deploy an eBPF probe — Lantern doesn't ship one. See
+    # docs/getting-signals-into-grafana.md before enabling it.
     enabled: false
 
 collector:
   enabled: true
   replicas: 1
+
+# Ships pod logs into Loki. See templates/logs-collector.yaml and
+# docs/getting-signals-into-grafana.md — without this, Loki is an empty
+# store with a Grafana datasource pointed at nothing.
+logsCollector:
+  enabled: true
 
 policy:
   requireTeamLabel: false
@@ -84,7 +107,13 @@ kube-prometheus-stack:
       - name: Tempo
         type: tempo
         uid: tempo-main
-        url: http://lantern-tempo.observability:3100
+        # Was :3100 -- Loki's port, not Tempo's. Copy-paste bug from the
+        # Loki entry right below this one: Tempo's actual HTTP query-
+        # frontend port is 3200 (server.http_listen_port in the tempo
+        # subchart's own config). Found because Grafana's datasource proxy
+        # returned a flat 502 for every Tempo query -- nothing else in the
+        # chain was broken, this URL just pointed nowhere real.
+        url: http://lantern-tempo.observability:3200
         access: proxy
       - name: Loki
         type: loki
@@ -94,22 +123,120 @@ kube-prometheus-stack:
 
 tempo:
   enabled: true
+  # The tempo.tempo.receivers override below (otlp only) looks like it
+  # should be enough, but Helm values merging can't delete a key -- the
+  # subchart's own default receivers map still has `opencensus:` (present,
+  # null/default config), and a values override can only add/overwrite
+  # keys, never remove one. Tempo v2.9.3 (the image this chart pins)
+  # dropped the OpenCensus receiver years ago (deprecated, folded into
+  # OpenTelemetry), so it refuses to start at all: "'receivers' unknown
+  # type: \"opencensus\"" -- found on a real cluster, every single time,
+  # not a hypothetical. The only reliable fix is overriding the whole
+  # templated `config` string with receivers hardcoded to exclude it;
+  # everything else below is copied verbatim from the tempo subchart's own
+  # default `config` (same tpl-evaluated .Values references), so it still
+  # responds correctly to every other tempo.tempo.* value.
+  config: |
+    stream_over_http_enabled: {{ .Values.tempo.streamOverHttpEnabled }}
+    memberlist:
+      cluster_label: "{{ .Release.Name }}.{{ .Release.Namespace }}"
+    multitenancy_enabled: {{ .Values.tempo.multitenancyEnabled }}
+    usage_report:
+      reporting_enabled: {{ .Values.tempo.reportingEnabled }}
+    compactor:
+      compaction:
+        block_retention: {{ .Values.tempo.retention }}
+    distributor:
+      receivers:
+        jaeger:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:14250
+            thrift_binary:
+              endpoint: 0.0.0.0:6832
+            thrift_compact:
+              endpoint: 0.0.0.0:6831
+            thrift_http:
+              endpoint: 0.0.0.0:14268
+        otlp:
+          protocols:
+            grpc:
+              endpoint: "0.0.0.0:4317"
+            http:
+              endpoint: "0.0.0.0:4318"
+    ingester:
+      {{- toYaml .Values.tempo.ingester | nindent 6 }}
+    server:
+      {{- toYaml .Values.tempo.server | nindent 6 }}
+    storage:
+      {{- toYaml .Values.tempo.storage | nindent 6 }}
+    querier:
+      {{- toYaml .Values.tempo.querier | nindent 6 }}
+    query_frontend:
+      {{- toYaml .Values.tempo.queryFrontend | nindent 6 }}
+    overrides:
+      {{- toYaml .Values.tempo.overrides | nindent 6 }}
+      {{- if .Values.tempo.metricsGenerator.enabled }}
+    metrics_generator:
+      {{- if .Values.tempo.metricsGenerator.processor }}
+      processor:
+        {{- toYaml .Values.tempo.metricsGenerator.processor | nindent 8 }}
+      {{- end }}
+      {{- if .Values.tempo.metricsGenerator.registry }}
+      registry:
+        {{- toYaml .Values.tempo.metricsGenerator.registry | nindent 8 }}
+      {{- end }}
+      storage:
+        path: {{ .Values.tempo.metricsGenerator.storage.path | quote }}
+        {{- if .Values.tempo.metricsGenerator.storage.remote_write }}
+        remote_write:
+          {{- toYaml .Values.tempo.metricsGenerator.storage.remote_write | nindent 10 }}
+        {{- else }}
+        remote_write:
+          - url: {{ .Values.tempo.metricsGenerator.remoteWriteUrl }}
+        {{- end }}
+      traces_storage:
+        path: {{ .Values.tempo.metricsGenerator.traces_storage.path | quote }}
+      {{- end }}
   tempo:
-    receivers:
-      otlp:
-        protocols:
-          grpc:
-            endpoint: 0.0.0.0:4317
-          http:
-            endpoint: 0.0.0.0:4318
+    resources:
+      requests:
+        cpu: 30m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
 
 loki:
   enabled: true
-  # Loki chart 18.x defaults to Monolithic mode, so the SingleBinary /
-  # read-write-backend juggling the 6.x chart needed is gone. This is the
-  # least-verified block in the chart — see the note in Chart.yaml. If the
-  # install fails, disable loki (`--set loki.enabled=false`) and continue:
-  # metrics, traces, instrumentation and alerts do not depend on it.
+  # The chart's own default is `deploymentMode: SimpleScalable`, which reads
+  # and writes as three separate targets (read/write/backend) and REQUIRES
+  # object storage (S3/GCS/etc.) — it will not come up on `storage.type:
+  # filesystem` below. A five-minute demo has no object store, so this is
+  # pinned to SingleBinary explicitly: one process, filesystem storage,
+  # correct for a small/no-HA install. Do not remove this without also
+  # switching to real object storage. This is the least-verified block in the
+  # chart — see the note in Chart.yaml. If the install still fails, disable
+  # loki (`--set loki.enabled=false`) and continue: metrics, traces,
+  # instrumentation and alerts do not depend on it.
+  deploymentMode: SingleBinary
+  singleBinary:
+    # The chart's own default is 0 replicas even in SingleBinary mode — it
+    # deploys nothing until this is set explicitly.
+    replicas: 1
+  # `deploymentMode` alone does not zero out the SimpleScalable target's own
+  # replica counts — write/read/backend default to 3 each *regardless* of
+  # deploymentMode (confirmed against the chart's own values.yaml and its
+  # templates/validate.yaml, which fails the render if singleBinary.replicas
+  # and any of these are both > 0: "more than zero replicas configured for
+  # both the single binary and simple scalable targets"). Found by actually
+  # running `helm template` against a real cluster — setting deploymentMode
+  # without this looks correct but still fails at render time.
+  write:
+    replicas: 0
+  read:
+    replicas: 0
+  backend:
+    replicas: 0
   loki:
     auth_enabled: false
     commonConfig:

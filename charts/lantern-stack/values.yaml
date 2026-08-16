@@ -60,6 +60,35 @@ instrumentation:
     provider: obi
     privileged: true
 
+# Log collection: a DaemonSet-mode collector that tails container stdout/
+# stderr from every node and ships it to backends.logs. This is separate from
+# `collector` above (which is Deployment-mode and only accepts telemetry
+# actively pushed to it via OTLP) because reading node-local log files needs a
+# pod on every node with a hostPath mount — a different shape of workload.
+#
+# Off by default, matching this file's bring-your-own posture: turn it on
+# once backends.logs points somewhere real, or use values-quickstart.yaml
+# which enables it. See docs/getting-signals-into-grafana.md.
+logsCollector:
+  enabled: false
+  image: otel/opentelemetry-collector-contrib:latest
+  # 100Mi/200Mi looked reasonable on paper but was too small for real
+  # application logs: found on a real cluster where the memory_limiter
+  # processor (limit_percentage: 80 of the container's own memory limit,
+  # see logs-collector.yaml) started rejecting log batches outright
+  # ("data refused due to high memory usage") for any service verbose
+  # enough to log full SQL query text per request -- silently, with the
+  # affected pods' log lines just never showing up in Loki, no error
+  # visible anywhere except this collector's own pod logs. 256Mi/512Mi
+  # gives real headroom for that kind of burst without needing a restart
+  # of anything on the application side once raised.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
 # The collector every injected agent exports to. Disable it if you already run
 # one and set backends.traces.otlpEndpoint to its address.
 collector:
@@ -144,6 +173,31 @@ gpuMonitoring:
 # ---------------------------------------------------------------------------
 opentelemetry-operator:
   enabled: false
+  # These two defaults apply whenever this subchart is turned on, quickstart
+  # or a BYO partial install alike — both were found causing real installs
+  # to fail against a live cluster with no cert-manager on it.
+  admissionWebhooks:
+    certManager:
+      # The chart's own default is true, which requires cert-manager to
+      # already be running on the cluster for the webhook's TLS cert. Most
+      # clusters adopting Lantern for the first time don't have cert-manager
+      # installed (this one didn't) and installing it too is a whole
+      # separate operator/CRD footprint just to get a webhook cert. false
+      # falls through to the chart's own autoGenerateCert path below instead.
+      enabled: false
+    autoGenerateCert:
+      enabled: true
+      # The chart's own default is true, which regenerates a brand-new
+      # self-signed CA/cert on every `helm upgrade` — but nothing in the
+      # chart restarts the already-running operator pod to pick up the new
+      # cert, so the pod keeps serving the old one while the webhook
+      # configs now trust the new CA. Found on a real `helm upgrade`
+      # immediately after a clean install: "certificate signed by unknown
+      # authority" on the very next apply, for every apply after that,
+      # forever. false makes the chart look up and reuse any existing
+      # secret instead (see the upstream chart's genCert helper), so the
+      # cert only gets generated once, on first install.
+      recreate: false
 kube-prometheus-stack:
   enabled: false
 tempo:

@@ -45,10 +45,6 @@ func B(v bool) Node { return scalarNode{text: strconv.FormatBool(v), plain: true
 // Lit is a literal block scalar (`|`), used for embedded PromQL and JSON.
 func Lit(s string) Node { return scalarNode{text: s, block: true} }
 
-// Raw emits text with no quoting analysis. Use only for values already known
-// to be safe plain scalars, such as a numeric PromQL threshold.
-func Raw(s string) Node { return scalarNode{text: s, plain: true} }
-
 func (s scalarNode) writeYAML(b *strings.Builder, indent int) {
 	b.WriteString(s.render(indent))
 }

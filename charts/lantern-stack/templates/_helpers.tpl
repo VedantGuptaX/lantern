@@ -57,3 +57,31 @@ app.kubernetes.io/name: lantern-stack
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
+
+{{/*
+True once the OpenTelemetryCollector CRD is registered on the API server.
+
+Why this matters: the opentelemetry-operator subchart ships that CRD outside
+Helm's special crds/ directory (in conf/crds/ instead — a template, not a
+pre-install-guaranteed object), so on a genuinely fresh cluster it lands in
+the same apply batch as any OpenTelemetryCollector custom resource this
+chart also creates. Helm builds and REST-maps the entire release manifest
+against the API server's CURRENT schema before applying anything, so a CR of
+a kind that doesn't exist yet fails the whole install outright — "ensure
+CRDs are installed first" — even though the very same release would have
+installed that CRD moments later. Found on a real first-ever `helm install`
+against an empty cluster, not a hypothetical.
+
+.Capabilities.APIVersions reflects the server's state as of the START of
+this helm operation, before this release's own crds/ objects are applied, so
+this check reads the same "not there yet" on both a first install and a
+`helm template` dry run. Gating collector.yaml / logs-collector.yaml's CR on
+this makes a first install skip creating them gracefully (see NOTES.txt for
+the follow-up instruction) instead of hard-failing the entire release.
+`make install-quickstart` runs the follow-up automatically.
+*/}}
+{{- define "lantern.otelCollectorCRDReady" -}}
+{{- if .Capabilities.APIVersions.Has "opentelemetry.io/v1beta1/OpenTelemetryCollector" -}}
+true
+{{- end -}}
+{{- end -}}

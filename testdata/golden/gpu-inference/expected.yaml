@@ -143,21 +143,21 @@ spec:
     - name: lantern-slo-meta-recordings-llama-70b-server-ttft
       rules:
         - record: lantern:objective:ratio
-          expr: 0.99
+          expr: "0.99"
           labels:
             lantern_id: llama-70b-server-ttft
             lantern_service: llama-70b-server
             lantern_slo: ttft
             team: ml-platform
         - record: lantern:error_budget:ratio
-          expr: 0.01
+          expr: "0.01"
           labels:
             lantern_id: llama-70b-server-ttft
             lantern_service: llama-70b-server
             lantern_slo: ttft
             team: ml-platform
         - record: lantern:time_period:days
-          expr: 7
+          expr: "7"
           labels:
             lantern_id: llama-70b-server-ttft
             lantern_service: llama-70b-server
@@ -343,21 +343,21 @@ spec:
     - name: lantern-slo-meta-recordings-llama-70b-server-inter-token-latency
       rules:
         - record: lantern:objective:ratio
-          expr: 0.99
+          expr: "0.99"
           labels:
             lantern_id: llama-70b-server-inter-token-latency
             lantern_service: llama-70b-server
             lantern_slo: inter-token-latency
             team: ml-platform
         - record: lantern:error_budget:ratio
-          expr: 0.01
+          expr: "0.01"
           labels:
             lantern_id: llama-70b-server-inter-token-latency
             lantern_service: llama-70b-server
             lantern_slo: inter-token-latency
             team: ml-platform
         - record: lantern:time_period:days
-          expr: 7
+          expr: "7"
           labels:
             lantern_id: llama-70b-server-inter-token-latency
             lantern_service: llama-70b-server
@@ -515,21 +515,21 @@ spec:
     - name: lantern-slo-meta-recordings-llama-70b-server-queue-depth
       rules:
         - record: lantern:objective:ratio
-          expr: 0.99
+          expr: "0.99"
           labels:
             lantern_id: llama-70b-server-queue-depth
             lantern_service: llama-70b-server
             lantern_slo: queue-depth
             team: ml-platform
         - record: lantern:error_budget:ratio
-          expr: 0.01
+          expr: "0.01"
           labels:
             lantern_id: llama-70b-server-queue-depth
             lantern_service: llama-70b-server
             lantern_slo: queue-depth
             team: ml-platform
         - record: lantern:time_period:days
-          expr: 7
+          expr: "7"
           labels:
             lantern_id: llama-70b-server-queue-depth
             lantern_service: llama-70b-server
@@ -605,3 +605,258 @@ spec:
             summary: llama-70b-server is burning its queue-depth error budget too fast
             description: "SLO \"queue-depth\" (objective 99% over 7d) is consuming error budget at a rate that exhausts it before the window ends. Burn-rate windows: 2h/1d at 3x, 6h/3d at 1x."
             runbook_url: https://runbooks.internal/slo/llama-70b-server-queue-depth
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lantern-dashboard-llama-70b-server
+  namespace: ml
+  labels:
+    grafana_dashboard: "1"
+    lantern.dev/managed: "true"
+    lantern.dev/service: llama-70b-server
+    lantern.dev/team: ml-platform
+data:
+  llama-70b-server.json: |-
+    {
+      "panels": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-main"
+          },
+          "description": "Recorded by the same rules that drive burn-rate alerts (lantern:sli_error:ratio_rate*, lantern:current_burn_rate:ratio) — this panel and the alert can never disagree.",
+          "gridPos": {
+            "h": 8,
+            "w": 16,
+            "x": 0,
+            "y": 0
+          },
+          "id": 1,
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-main"
+              },
+              "expr": "{__name__=~\"lantern:sli_error:ratio_rate.+\", lantern_id=\"llama-70b-server-ttft\"}",
+              "legendFormat": "{{lantern_window}}",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-main"
+              },
+              "expr": "lantern:current_burn_rate:ratio{lantern_id=\"llama-70b-server-ttft\"}",
+              "legendFormat": "current burn rate",
+              "refId": "B"
+            }
+          ],
+          "title": "ttft: SLI error ratio by window",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-main"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit"
+            }
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 0
+          },
+          "id": 2,
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-main"
+              },
+              "expr": "lantern:period_error_budget_remaining:ratio{lantern_id=\"llama-70b-server-ttft\"}",
+              "refId": "A"
+            }
+          ],
+          "title": "ttft: error budget remaining",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-main"
+          },
+          "description": "Recorded by the same rules that drive burn-rate alerts (lantern:sli_error:ratio_rate*, lantern:current_burn_rate:ratio) — this panel and the alert can never disagree.",
+          "gridPos": {
+            "h": 8,
+            "w": 16,
+            "x": 0,
+            "y": 8
+          },
+          "id": 3,
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-main"
+              },
+              "expr": "{__name__=~\"lantern:sli_error:ratio_rate.+\", lantern_id=\"llama-70b-server-inter-token-latency\"}",
+              "legendFormat": "{{lantern_window}}",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-main"
+              },
+              "expr": "lantern:current_burn_rate:ratio{lantern_id=\"llama-70b-server-inter-token-latency\"}",
+              "legendFormat": "current burn rate",
+              "refId": "B"
+            }
+          ],
+          "title": "inter-token-latency: SLI error ratio by window",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-main"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit"
+            }
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 8
+          },
+          "id": 4,
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-main"
+              },
+              "expr": "lantern:period_error_budget_remaining:ratio{lantern_id=\"llama-70b-server-inter-token-latency\"}",
+              "refId": "A"
+            }
+          ],
+          "title": "inter-token-latency: error budget remaining",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-main"
+          },
+          "description": "Recorded by the same rules that drive burn-rate alerts (lantern:sli_error:ratio_rate*, lantern:current_burn_rate:ratio) — this panel and the alert can never disagree.",
+          "gridPos": {
+            "h": 8,
+            "w": 16,
+            "x": 0,
+            "y": 16
+          },
+          "id": 5,
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-main"
+              },
+              "expr": "{__name__=~\"lantern:sli_error:ratio_rate.+\", lantern_id=\"llama-70b-server-queue-depth\"}",
+              "legendFormat": "{{lantern_window}}",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-main"
+              },
+              "expr": "lantern:current_burn_rate:ratio{lantern_id=\"llama-70b-server-queue-depth\"}",
+              "legendFormat": "current burn rate",
+              "refId": "B"
+            }
+          ],
+          "title": "queue-depth: SLI error ratio by window",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prom-main"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit"
+            }
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 16
+          },
+          "id": 6,
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-main"
+              },
+              "expr": "lantern:period_error_budget_remaining:ratio{lantern_id=\"llama-70b-server-queue-depth\"}",
+              "refId": "A"
+            }
+          ],
+          "title": "queue-depth: error budget remaining",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-main"
+          },
+          "description": "Requires Lantern's log-collection DaemonSet (logsCollector.enabled) to actually ship pod logs into Loki — see docs/getting-signals-into-grafana.md. Filtered by namespace=\"ml\", deployment=\"llama-70b-server\".",
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 24
+          },
+          "id": 7,
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-main"
+              },
+              "expr": "{namespace=\"ml\", deployment=\"llama-70b-server\"}",
+              "refId": "A"
+            }
+          ],
+          "title": "Logs",
+          "type": "logs"
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 39,
+      "tags": [
+        "lantern",
+        "team:ml-platform"
+      ],
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "timezone": "browser",
+      "title": "Lantern: llama-70b-server",
+      "uid": "lantern-llama-70b-server",
+      "version": 1
+    }

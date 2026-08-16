@@ -67,24 +67,55 @@ Per-pod GPU attribution additionally requires dcgm-exporter's own
 `DCGM_EXPORTER_KUBERNETES=true` setting (configured on dcgm-exporter, not
 here) so its series carry `pod`/`namespace` labels a selector can match.
 
-## Status: written, never installed
+## Log collection — `logsCollector.enabled`
 
-This chart has not been resolved by `helm dependency update`, linted, rendered,
-or installed. Treat it as a first draft.
+Off by default in `values.yaml`, on in `values-quickstart.yaml`. Without it,
+`loki.enabled: true` deploys an empty log *store* with a Grafana datasource
+pointed at it — nothing actually tails pod logs into it. `collector.yaml`'s
+Deployment-mode collector doesn't do this either: its `logs` pipeline only
+accepts telemetry actively pushed to it via OTLP, and nothing in Lantern
+pushes application logs that way unless a service's own SDK does.
 
-Subchart versions were checked against upstream release pages in August 2026,
-which caught two real problems worth knowing about:
+`logsCollector` is a separate DaemonSet-mode `OpenTelemetryCollector` (see
+`templates/logs-collector.yaml`) that tails `/var/log/pods` on every node,
+extracts `k8s.namespace.name`/`k8s.pod.name`/`k8s.deployment.name` from the
+log file path itself, resolves the owning Deployment via the Kubernetes API
+(hence the `ClusterRole` this template also creates), and ships to
+`backends.logs`. Loki's own OTLP ingestion treats those three plus
+`service.name` as index labels by default — checked against Loki's docs
+directly — so namespace/pod/deployment/service filtering in Grafana needs no
+extra Loki-side config. See
+[docs/getting-signals-into-grafana.md](../../docs/getting-signals-into-grafana.md)
+for the full picture, including the equivalent gap for traces (eBPF mode
+needs a probe Lantern does not install) and how the compiler's generated
+dashboards use all of this.
+
+## Status: `helm template` verified against a real cluster; not yet installed
+
+`helm dependency update`, `helm lint`, and `helm template` have all been run
+for real (not just checked by hand) against `values-quickstart.yaml`, on the
+bastion session that also validated the rest of Lantern against a live AKS
+cluster — see `plan.md`'s findings log for the two rounds that got it there.
+Actually installing this chart into a running cluster (`helm install`) has
+still never happened.
+
+Two real problems surfaced along the way, both fixed and re-verified:
 
 - **Grafana's Loki and Tempo charts moved repositories** on 30 January 2026,
   from `grafana/helm-charts` to `grafana-community/helm-charts`. The old URL
   still serves archived versions but gets no new releases.
 - **Loki jumped from 6.55.0 to the 17/18 series** — twelve majors of breaking
-  changes. The default deployment mode changed from SimpleScalable to
-  Monolithic, Enterprise support was removed, and the bundled MinIO is
-  deprecated. The Loki block in `values-quickstart.yaml` is the least
-  trustworthy part of this chart; if the install fails there, use
-  `--set loki.enabled=false` and carry on. Metrics, traces, instrumentation
-  and alerts do not depend on Loki.
+  changes, and the actual default deployment mode is `SimpleScalable`, not
+  "Monolithic" (that mode name doesn't exist in this chart at all — confirmed
+  directly against the chart source, after an earlier version of this README
+  got it wrong). `SimpleScalable` needs object storage this chart doesn't
+  configure, and pinning `deploymentMode: SingleBinary` alone isn't enough
+  either — the `write`/`read`/`backend` replica counts default to 3 each
+  regardless of `deploymentMode`, so those need zeroing too. Both are done in
+  `values-quickstart.yaml`, and `helm template`'s output is confirmed to be a
+  single StatefulSet, not three read/write/backend workloads. If Loki still
+  gives you trouble, `--set loki.enabled=false` and carry on — metrics,
+  traces, instrumentation and alerts do not depend on it (logs obviously do).
 
 To verify:
 

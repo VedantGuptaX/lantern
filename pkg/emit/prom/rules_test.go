@@ -82,6 +82,59 @@ func TestPromLabelNamesAreValid(t *testing.T) {
 	}
 }
 
+// TestMetadataRecordingExprIsQuoted is the regression test for a bug found
+// applying real output to a live cluster: PrometheusRule's CRD schema
+// requires every rule's `expr` to serialize as a YAML string. The SLO
+// objective/error-budget/period-days recording rules emit a bare numeric
+// constant (e.g. 0.999) as their expr — valid PromQL, but if the YAML
+// encoder writes it as an unquoted plain scalar, Kubernetes parses it as a
+// native number, not a string, and the API server rejects the whole object
+// ("must be of type integer,string"). `kubectl diff`/apply against a real
+// cluster is what actually caught this; golden fixtures alone did not, since
+// nothing had validated the output against a live CRD schema before.
+func TestMetadataRecordingExprIsQuoted(t *testing.T) {
+	obj, _, err := BuildRules(RuleInput{
+		Service:     "checkout-api",
+		Namespace:   "shop",
+		Team:        "payments",
+		ServiceKind: api.KindHTTP,
+		Selector:    `service_name="checkout-api"`,
+		SLOs:        []api.SLO{{Name: "availability", Type: api.SLOAvailability, Objective: 99.9, Window: "30d"}},
+	})
+	if err != nil {
+		t.Fatalf("BuildRules: %v", err)
+	}
+
+	names := []string{
+		"lantern:objective:ratio",
+		"lantern:error_budget:ratio",
+		"lantern:time_period:days",
+	}
+	lines := strings.Split(obj.YAML(), "\n")
+	for _, name := range names {
+		found := false
+		for i, line := range lines {
+			if !strings.Contains(line, `record: "`+name+`"`) && !strings.Contains(line, "record: "+name) {
+				continue
+			}
+			// expr is the next line in this rule's map.
+			exprLine := strings.TrimSpace(lines[i+1])
+			if !strings.HasPrefix(exprLine, "expr:") {
+				t.Fatalf("expected expr on the line after record: %s, got %q", name, exprLine)
+			}
+			value := strings.TrimSpace(strings.TrimPrefix(exprLine, "expr:"))
+			if !strings.HasPrefix(value, `"`) || !strings.HasSuffix(value, `"`) {
+				t.Errorf("record %s: expr = %s, want a quoted YAML string (unquoted numeric scalars fail live CRD validation)", name, value)
+			}
+			found = true
+			break
+		}
+		if !found {
+			t.Fatalf("recording rule %s not found in output", name)
+		}
+	}
+}
+
 // TestLatencyBucketBound checks the `le` selector matches how Prometheus
 // renders histogram bucket bounds. A mismatch here silently selects nothing,
 // which reads as "the service is perfectly fast".

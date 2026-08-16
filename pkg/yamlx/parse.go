@@ -5,8 +5,18 @@
 // implements the subset of YAML that Kubernetes manifests actually use: block
 // maps, block sequences, flow maps and sequences, quoted and plain scalars,
 // literal block scalars, comments, and multi-document streams. Anchors,
-// aliases, merge keys, tags, and folded scalars are deliberately unsupported
-// and produce an explicit error rather than silently wrong data.
+// aliases, merge keys, tags, and explicit `>` folded block scalars are
+// deliberately unsupported and produce an explicit error rather than
+// silently wrong data.
+//
+// Plain and quoted scalars that a YAML encoder (kubectl's included) wraps
+// across multiple lines are supported: any line indented deeper than a
+// `key: value` or `- value` line is, under YAML's grammar, necessarily a
+// continuation of that same scalar — a nested block map or sequence requires
+// the key/dash to have nothing after it on its own line — so such lines are
+// folded into the value with a single space, same as real YAML plain-scalar
+// folding. This is distinct from an explicit `>` block scalar header, which
+// remains unsupported.
 //
 // Decoding goes YAML -> generic Go value -> encoding/json -> typed struct, so
 // the struct `json:"..."` tags are the single source of truth for field names,
@@ -227,7 +237,7 @@ func (p *parser) parseMap(indent int) (map[string]any, error) {
 			m[key] = v
 
 		case rest != "":
-			v, err := parseInline(rest, l.num)
+			v, err := p.parseScalarValue(rest, indent, l.num)
 			if err != nil {
 				return nil, err
 			}
@@ -300,14 +310,49 @@ func (p *parser) parseSeq(indent int) ([]any, error) {
 			continue
 		}
 
-		v, err := parseInline(trimmed, l.num)
+		p.pos++
+		// Use the dash's own indent as the continuation threshold (matching
+		// parseMap's use of the key's indent), not itemIndent (the value's
+		// start column) — a continuation line only needs to be deeper than
+		// the `-`, not aligned with where the value happens to start.
+		v, err := p.parseScalarValue(trimmed, l.indent, l.num)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, v)
-		p.pos++
 	}
 	return out, nil
+}
+
+// gatherContinuation consumes and returns the trimmed text of every
+// subsequent line indented deeper than parentIndent. Under YAML's grammar,
+// such a line can only be a continuation of the scalar value that precedes
+// it — see the package doc comment.
+func (p *parser) gatherContinuation(parentIndent int) []string {
+	var out []string
+	for p.pos < len(p.lines) && p.lines[p.pos].indent > parentIndent {
+		out = append(out, strings.TrimSpace(p.lines[p.pos].text))
+		p.pos++
+	}
+	return out
+}
+
+// parseScalarValue parses an inline scalar value (the `rest` after `key:` or
+// `-`), folding in any deeper-indented continuation lines per plain/quoted
+// scalar line-folding. Flow collections are never folded — they're always
+// fully specified on their starting line in this subset, so a deeper-indented
+// line after one is a real error, not a continuation.
+func (p *parser) parseScalarValue(rest string, parentIndent int, lineNum int) (any, error) {
+	trimmed := strings.TrimSpace(rest)
+	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+		return parseInline(rest, lineNum)
+	}
+	cont := p.gatherContinuation(parentIndent)
+	if len(cont) == 0 {
+		return parseInline(rest, lineNum)
+	}
+	parts := append([]string{trimmed}, cont...)
+	return parseInline(strings.Join(parts, " "), lineNum)
 }
 
 func isBlockScalarHeader(s string) bool {

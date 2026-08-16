@@ -39,11 +39,62 @@ discover flags:
   -ns <a,b>        restrict discovery to these namespaces
   -all             include platform namespaces (kube-system and friends)
 
+Flags may appear before, after, or interspersed with paths — both
+"lantern discover -team platform ./manifests" and
+"lantern discover ./manifests -team platform" work the same way.
+
 Examples:
   kubectl get deploy,statefulset,cronjob -A -o yaml | lantern discover -
   lantern discover ./manifests -team platform > services.yaml
   lantern synth -stack stack.yaml services.yaml | kubectl apply -f -
 `
+
+// valueFlags names every flag (across all subcommands) that consumes a
+// following argument as its value; everything else in boolFlags is a bare
+// switch. Both are declared once here, rather than derived from the flag.FlagSet,
+// because reorderArgs runs before fs.Parse.
+var valueFlags = map[string]bool{"stack": true, "o": true, "team": true, "ns": true}
+
+// reorderArgs works around a real Go stdlib limitation: flag.FlagSet.Parse
+// stops at the first non-flag argument, so `lantern discover - -team
+// unassigned` (a natural way to type it, and the exact form that tripped up
+// a real first-time run against a live cluster) leaves "-team" and
+// "unassigned" in fs.Args() as if they were file paths — producing a
+// misleading `stat -team: no such file or directory` instead of using the
+// flag. This walks the raw argument list once, pulls out every recognised
+// flag (and its value, for flags that take one) regardless of where it sits
+// relative to positional arguments, and returns the two lists separately so
+// callers can fs.Parse the flags and use the positionals directly. `-`
+// (the stdin marker) and `--` (the conventional flag/positional separator)
+// are never treated as flags.
+func reorderArgs(args []string) (flags []string, positional []string) {
+	rest := false
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case rest:
+			positional = append(positional, a)
+		case a == "--":
+			rest = true
+		case a == "-":
+			positional = append(positional, a)
+		case strings.HasPrefix(a, "-") && len(a) > 1:
+			flags = append(flags, a)
+			name := strings.TrimLeft(a, "-")
+			if eq := strings.IndexByte(name, '='); eq >= 0 {
+				name = name[:eq]
+			} else if valueFlags[name] && i+1 < len(args) {
+				// Only consume the next token as this flag's value if the
+				// flag wasn't already given as `-name=value`.
+				i++
+				flags = append(flags, args[i])
+			}
+		default:
+			positional = append(positional, a)
+		}
+	}
+	return flags, positional
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -64,13 +115,15 @@ func main() {
 
 	switch cmd {
 	case "synth", "validate":
-		_ = fs.Parse(os.Args[2:])
-		if err := run(cmd, *stackPath, *outDir, fs.Args(), *quiet, *strict); err != nil {
+		flagArgs, positional := reorderArgs(os.Args[2:])
+		_ = fs.Parse(flagArgs)
+		if err := run(cmd, *stackPath, *outDir, append(fs.Args(), positional...), *quiet, *strict); err != nil {
 			fmt.Fprintf(os.Stderr, "lantern: %v\n", err)
 			os.Exit(1)
 		}
 	case "discover":
-		_ = fs.Parse(os.Args[2:])
+		flagArgs, positional := reorderArgs(os.Args[2:])
+		_ = fs.Parse(flagArgs)
 		opts := discover.Options{
 			IncludeSystem: *includeSystem,
 			DefaultTeam:   *team,
@@ -78,7 +131,7 @@ func main() {
 		if *namespaces != "" {
 			opts.Namespaces = strings.Split(*namespaces, ",")
 		}
-		if err := runDiscover(fs.Args(), opts, *quiet); err != nil {
+		if err := runDiscover(append(fs.Args(), positional...), opts, *quiet); err != nil {
 			fmt.Fprintf(os.Stderr, "lantern: %v\n", err)
 			os.Exit(1)
 		}
