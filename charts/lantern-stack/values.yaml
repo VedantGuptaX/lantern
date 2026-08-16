@@ -72,12 +72,22 @@ instrumentation:
 logsCollector:
   enabled: false
   image: otel/opentelemetry-collector-contrib:latest
+  # 100Mi/200Mi looked reasonable on paper but was too small for real
+  # application logs: found on a real cluster where the memory_limiter
+  # processor (limit_percentage: 80 of the container's own memory limit,
+  # see logs-collector.yaml) started rejecting log batches outright
+  # ("data refused due to high memory usage") for any service verbose
+  # enough to log full SQL query text per request -- silently, with the
+  # affected pods' log lines just never showing up in Loki, no error
+  # visible anywhere except this collector's own pod logs. 256Mi/512Mi
+  # gives real headroom for that kind of burst without needing a restart
+  # of anything on the application side once raised.
   resources:
     requests:
       cpu: 50m
-      memory: 100Mi
+      memory: 256Mi
     limits:
-      memory: 200Mi
+      memory: 512Mi
 
 # The collector every injected agent exports to. Disable it if you already run
 # one and set backends.traces.otlpEndpoint to its address.
