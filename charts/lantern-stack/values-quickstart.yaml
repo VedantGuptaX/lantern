@@ -44,6 +44,22 @@ instrumentation:
 collector:
   enabled: true
   replicas: 1
+  # The chart's own default (100m) reserves far more than this actually
+  # uses in practice -- measured on a real cluster via `kubectl top pod`:
+  # ~29m steady-state. On a tight cluster (see README's "Resource
+  # requirements" table), that gap between requested and actually-used CPU
+  # is real scheduling headroom sitting idle -- found the hard way when a
+  # single agent-injected pod's 50m init-container request couldn't
+  # schedule anywhere despite the cluster having real spare CPU capacity,
+  # just not reserved as such. Lowered to 40m: still real margin above the
+  # ~29m measured, but frees 60m of request for things that actually need
+  # to schedule.
+  resources:
+    requests:
+      cpu: 40m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
 
 # Ships pod logs into Loki. See templates/logs-collector.yaml and
 # docs/getting-signals-into-grafana.md — without this, Loki is an empty
@@ -201,7 +217,13 @@ tempo:
   tempo:
     resources:
       requests:
-        cpu: 30m
+        # Measured on a real cluster via `kubectl top pod`: ~4m steady-state
+        # CPU, well under the 30m originally requested. Lowered to 10m
+        # (still real margin above measured usage) to free CPU-request
+        # headroom on a chronically tight cluster -- see the collector's
+        # resources comment above for why this matters concretely, not just
+        # in the abstract.
+        cpu: 10m
         memory: 128Mi
       # 256Mi looked fine for the first ~12.5h on a real cluster, then
       # OOMKilled outright (exit 137) with no warning beforehand -- Tempo's
