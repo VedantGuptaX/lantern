@@ -230,11 +230,18 @@ tempo:
       # ingester accumulates in-memory blocks between flushes, so memory
       # grows with sustained trace volume/query load rather than staying
       # flat, and 256Mi just wasn't enough headroom for that. Raised to
-      # 512Mi; this cluster has real memory slack (unlike CPU, see README's
-      # "Resource requirements" table), so this is cheap insurance, not a
-      # tight squeeze.
+      # 512Mi -- which then OOMKilled again after only ~19 minutes once
+      # real SDK instrumentation expanded from 1 service to all 8: trace
+      # ingestion volume scales with instrumented-service count, and 512Mi
+      # was sized for the single-canary load, not the fleet. Every crash
+      # loses whatever spans were mid-assembly, which is what "traces
+      # missing from dashboards" actually was -- not a query/dashboard bug,
+      # a resource-limit-vs-real-load mismatch. Raised to 1536Mi; this
+      # cluster has real memory slack (~1.9-2.8Gi free per node when this
+      # was measured, unlike CPU, see README's "Resource requirements"
+      # table), so this is real headroom, not a guess.
       limits:
-        memory: 512Mi
+        memory: 1536Mi
   # The chart's own default is persistence.enabled: false -- trace data
   # lives on whatever ephemeral storage the pod's writable layer gives it
   # and is gone on every restart/reschedule. Fine for a five-minute demo,
