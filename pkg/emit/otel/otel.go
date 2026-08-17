@@ -84,7 +84,40 @@ func BuildInstrumentation(in Input) (*kube.Object, error) {
 		attrs["team"] = in.Team
 	}
 
+	// Pin the injected agents to STABLE HTTP semantic conventions.
+	//
+	// This is one half of a contract with pkg/emit/prom/sli.go, which builds
+	// every HTTP SLI query against the stable names
+	// (http_server_request_duration_seconds_count, and the
+	// http_response_status_code attribute). Auto-instrumentation agents
+	// default to the OLD pre-1.23 convention instead
+	// (http_server_duration_milliseconds_count, http_status_code) unless
+	// explicitly opted in, so without this the two halves never meet.
+	//
+	// FOUND ON A REAL CLUSTER, and it is completely silent: agents export
+	// happily, the collector forwards happily, Prometheus stores the series
+	// happily -- under names nothing queries. Every SLI recording rule
+	// evaluates to no data, so every per-service dashboard panel and every
+	// SLO burn-rate alert stays permanently empty with no error anywhere to
+	// explain why. Confirmed by querying Prometheus directly: 0 series for
+	// the name the rules use, 6 for the name actually being written.
+	//
+	// "http" (not "http/dup") because nothing in this project queries the
+	// old names, so paying double HTTP metric cardinality to keep emitting
+	// them would be waste. Supported by the Node.js agent since 0.54.0 and
+	// the equivalent releases of the Java/Python/.NET agents; on any agent
+	// too old to recognise it the variable is simply ignored, which leaves
+	// behaviour exactly as it was rather than breaking anything.
+	// See https://opentelemetry.io/docs/specs/semconv/non-normative/http-migration/
+	env := yamlx.NewSeq(
+		yamlx.NewMap(
+			"name", yamlx.S("OTEL_SEMCONV_STABILITY_OPT_IN"),
+			"value", yamlx.S("http"),
+		),
+	)
+
 	spec := yamlx.NewMap(
+		"env", env,
 		"exporter", yamlx.NewMap("endpoint", yamlx.S(in.OTLPEndpoint)),
 		"propagators", yamlx.Strings("tracecontext", "baggage"),
 		"sampler", sampler,
