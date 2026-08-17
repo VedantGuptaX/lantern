@@ -249,6 +249,20 @@ loki:
     replicas: 0
   backend:
     replicas: 0
+  # The chart's own defaults for these are both `enabled: true` -- optional
+  # memcached-based caches for query results and chunk lookups. Found live on
+  # a real cluster: each one requests 500m CPU / 9830Mi memory, sized for a
+  # production Loki install, not this demo-scale single-binary target. On a
+  # tight cluster (see README's "Resource requirements" table) they never
+  # schedule -- `FailedScheduling: Insufficient cpu, Insufficient memory` --
+  # and just sit there as permanently Pending StatefulSets. Loki works
+  # correctly without them, just without result caching for repeat identical
+  # queries. Disabled here rather than left as silent scheduling noise;
+  # re-enable explicitly if you have the headroom and want the caching.
+  resultsCache:
+    enabled: false
+  chunksCache:
+    enabled: false
   loki:
     auth_enabled: false
     commonConfig:
