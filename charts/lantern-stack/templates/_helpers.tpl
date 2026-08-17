@@ -14,9 +14,24 @@ which setting is missing rather than silently rendering a broken stack.
 {{- default .Release.Namespace .Values.namespace -}}
 {{- end -}}
 
+{{/*
+The OpenTelemetryCollector CR this chart creates is named
+"<release>-collector" (see templates/collector.yaml), and the OTel Operator
+always appends its own "-collector" suffix to whatever Service it generates
+for a CR -- regardless of what the CR's own name already contains. That
+means the real, live Service is "<release>-collector-collector", not
+"<release>-collector". Verified against a real cluster: `kubectl get svc -n
+observability` shows "lantern-collector-collector" and
+"lantern-logs-collector-collector", both with the suffix doubled. A
+single-suffix endpoint here silently breaks every mode: agent/sdk
+Instrumentation CR's exporter -- the injected agent just can't reach a
+Service that doesn't exist, with no error at apply time. eBPF mode (OBI)
+doesn't go through this path, which is why this went unnoticed until
+agent-mode instrumentation was actually tried for real.
+*/}}
 {{- define "lantern.collectorEndpoint" -}}
 {{- if .Values.collector.enabled -}}
-http://{{ .Release.Name }}-collector.{{ include "lantern.namespace" . }}:4318
+http://{{ .Release.Name }}-collector-collector.{{ include "lantern.namespace" . }}:4318
 {{- end -}}
 {{- end -}}
 

@@ -141,6 +141,40 @@ data:
         continue
       fi
 
+      # A nonzero instance count isn't proof of a foreign install either: this
+      # release's OWN resources can legitimately exist here two ways neither
+      # of which stamps the CRD-LEVEL annotation checked above. (a) Instances
+      # created by an earlier successful run of THIS same release still carry
+      # their own per-instance meta.helm.sh/release-name annotation — Helm
+      # does annotate regular templated resources, just never the CRD
+      # definition itself. (b) Instances applied directly by
+      # `lantern synth | kubectl apply` — how Lantern ships its own
+      # ServiceMonitors/PrometheusRules, entirely outside Helm — carry
+      # lantern.dev/managed=true instead. FOUND LIVE on a real cluster's
+      # second `helm upgrade`: 1 Alertmanager + 1 Prometheus (this release's
+      # own, Helm-owned) and 9 ServiceMonitors + 9 PrometheusRules (Lantern's
+      # own synth output) were all being counted as "foreign" here and
+      # blocking every upgrade after the very first install — a real
+      # instance of the exact ambiguity this hook exists to resolve, just one
+      # level down (per-instance, not per-CRD). Only instances matching
+      # neither signal are actually unrecognized.
+      if [ "$INSTANCE_COUNT" -gt 0 ] 2>/dev/null; then
+        UNRECOGNIZED=$(kubectl get "$RESOURCE.$GROUP" --all-namespaces \
+          -o jsonpath='{range .items[*]}{.metadata.annotations.meta\.helm\.sh/release-name}|{.metadata.annotations.meta\.helm\.sh/release-namespace}|{.metadata.labels.lantern\.dev/managed}{"\n"}{end}' 2>/dev/null \
+          | awk -F'|' -v rel="$RELEASE" -v ns="$NAMESPACE" \
+              '!(($1==rel && $2==ns) || $3=="true") { c++ } END { print c+0 }')
+      else
+        UNRECOGNIZED=$INSTANCE_COUNT
+      fi
+
+      if [ "$UNRECOGNIZED" -eq 0 ] 2>/dev/null; then
+        echo "ok:    $crd exists with no CRD-level Helm ownership annotation, and has"
+        echo "       $INSTANCE_COUNT custom resource(s), but every one is recognized as"
+        echo "       this release's own (Helm-owned by $RELEASE/$NAMESPACE, or"
+        echo "       lantern.dev/managed=true) — proceeding."
+        continue
+      fi
+
       if [ "$INSTANCE_COUNT" -lt 0 ] 2>/dev/null; then
         echo "BLOCK: $crd exists and its custom resource instances could not be listed"
         echo "       (RBAC or API error) — cannot confirm it's safe. Run"
@@ -149,11 +183,13 @@ data:
         echo "       anyway if this is expected."
         BLOCKED=1
       elif [ -z "$OWNER_NAME" ]; then
-        echo "BLOCK: $crd exists, is not Helm-managed, and already has $INSTANCE_COUNT"
-        echo "       custom resource(s) under it — this is a real, in-use install, not"
-        echo "       just-created residue. Run scripts/preflight-check.sh from a machine"
-        echo "       with kubectl access for the full report, or set"
-        echo "       preflight.hook.enabled=false to proceed anyway if this is expected."
+        echo "BLOCK: $crd exists, is not Helm-managed, and has $UNRECOGNIZED unrecognized"
+        echo "       custom resource(s) under it (of $INSTANCE_COUNT total, the rest"
+        echo "       recognized as this release's own) — this looks like a real, in-use"
+        echo "       install belonging to something else, not just-created residue. Run"
+        echo "       scripts/preflight-check.sh from a machine with kubectl access for"
+        echo "       the full report, or set preflight.hook.enabled=false to proceed"
+        echo "       anyway if this is expected."
         BLOCKED=1
       else
         echo "BLOCK: $crd exists, owned by Helm release '$OWNER_NAME/$OWNER_NS' — not this"

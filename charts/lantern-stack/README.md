@@ -125,6 +125,18 @@ eBPF maps, the `/sys/fs/bpf` hostPath mount HTTP/gRPC tracing actually needs,
 why the narrowed-capability path may not fully work, and the
 `hostNetwork` tradeoff `contextPropagation.enabled` pulls in).
 
+## Kubernetes Events — bring your own exporter, same pattern as traces
+
+Same shape of gap: `kubectl get events` expires from etcd after ~1h, and
+nothing in this chart exports them anywhere longer-lived. Verified end-to-end
+on a real cluster using a standalone `kubernetes-events-exporter` release
+(not part of this chart) pushing to Loki, queryable with a `job="k8s-events"`
+label — see
+[docs/getting-signals-into-grafana.md](../../docs/getting-signals-into-grafana.md#kubernetes-events-not-shipped-by-default-same-pattern-as-obi)
+for the working values file and, importantly, why its own default RBAC
+(cluster-wide read on every resource including Secrets) needs scoping down
+before you apply it.
+
 ## Status: verified end-to-end against a real, populated AKS cluster
 
 `helm install`/`helm upgrade` have run repeatedly against a real AKS cluster
@@ -183,6 +195,24 @@ cluster they were found on:
   `scripts/preflight-check.sh`) now additionally check whether the CRD
   actually has real custom-resource instances under it; an empty CRD has
   nothing to conflict with regardless of who "owns" the definition.
+- **...and then blocked every `helm upgrade` after the first install too**,
+  found on a real second upgrade of an already-populated cluster: a nonzero
+  instance count alone still isn't proof of a foreign install — this
+  release's own already-existing ServiceMonitors/PrometheusRules (applied
+  via `lantern synth | kubectl apply`, not Helm) and its own
+  Alertmanager/Prometheus CRs (Helm-owned, but the *CRD* itself still
+  carries no annotation) were both being counted as foreign and blocking
+  every upgrade. Fixed to check per-instance ownership — Helm annotation
+  matching this release, or `lantern.dev/managed=true` — before blocking on
+  a nonzero count.
+- **Tempo has no persistent storage by default**; trace data lived on the
+  pod's ephemeral writable layer and was gone on every restart. Loki's own
+  chart already defaults to a real PVC (`singleBinary.persistence.enabled:
+  true`); `values-quickstart.yaml` now sets `tempo.persistence.enabled: true`
+  to match. Enabling this on an already-running Tempo needs a StatefulSet
+  delete-and-recreate first — Kubernetes rejects adding
+  `volumeClaimTemplates` to an existing StatefulSet in-place — see
+  [docs/getting-signals-into-grafana.md](../../docs/getting-signals-into-grafana.md#durable-storage-for-logs-and-traces-production-clusters).
 - **`logsCollector` shipped with `start_at: beginning`**, replaying a node's
   entire log history — every system pod included, not just app workloads —
   on every restart of the collector itself, not just its first start. On a
