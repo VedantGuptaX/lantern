@@ -203,8 +203,16 @@ tempo:
       requests:
         cpu: 30m
         memory: 128Mi
+      # 256Mi looked fine for the first ~12.5h on a real cluster, then
+      # OOMKilled outright (exit 137) with no warning beforehand -- Tempo's
+      # ingester accumulates in-memory blocks between flushes, so memory
+      # grows with sustained trace volume/query load rather than staying
+      # flat, and 256Mi just wasn't enough headroom for that. Raised to
+      # 512Mi; this cluster has real memory slack (unlike CPU, see README's
+      # "Resource requirements" table), so this is cheap insurance, not a
+      # tight squeeze.
       limits:
-        memory: 256Mi
+        memory: 512Mi
   # The chart's own default is persistence.enabled: false -- trace data
   # lives on whatever ephemeral storage the pod's writable layer gives it
   # and is gone on every restart/reschedule. Fine for a five-minute demo,
