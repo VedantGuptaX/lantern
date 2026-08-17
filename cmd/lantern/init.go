@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -249,8 +250,21 @@ func runInit(outPath string) error {
 	if outPath == "" {
 		outPath = "values-init.yaml"
 	}
+	// Both of these checks happen BEFORE the first prompt, deliberately.
+	// Failing after the questions throws away answers the user just typed --
+	// found by running `lantern init -o /nonexistent-dir/v.yaml`, which asked
+	// all five questions and only then reported it couldn't write the file.
 	if _, err := os.Stat(outPath); err == nil {
 		return fmt.Errorf("%s already exists; pass -o to write somewhere else", outPath)
+	}
+	if dir := filepath.Dir(outPath); dir != "" {
+		info, err := os.Stat(dir)
+		if err != nil {
+			return fmt.Errorf("cannot write %s: %w", outPath, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("cannot write %s: %s is not a directory", outPath, dir)
+		}
 	}
 
 	answers, err := runInitPrompts(os.Stdin, os.Stdout)
