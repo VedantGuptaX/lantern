@@ -23,6 +23,7 @@ import (
 const usage = `lantern — observability as code
 
 Usage:
+  lantern init     [flags]                  ask what you want, write a Helm values overlay
   lantern discover [flags] <path|->...      draft specs from existing workloads
   lantern synth    [flags] <spec.yaml>...   compile specs to Kubernetes manifests
   lantern validate [flags] <spec.yaml>...   parse and check specs, emit no output
@@ -30,7 +31,8 @@ Usage:
 
 Flags:
   -stack <file>    ObservabilityStack to compile against (synth, validate)
-  -o <dir>         write one file per object instead of a stream on stdout
+  -o <dir>         write one file per object instead of a stream on stdout (synth)
+  -o <file>        write the generated values overlay here instead of ./values-init.yaml (init)
   -quiet           suppress diagnostics on stderr
   -strict          treat warnings as errors
 
@@ -114,6 +116,13 @@ func main() {
 	fs.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 
 	switch cmd {
+	case "init":
+		flagArgs, _ := reorderArgs(os.Args[2:])
+		_ = fs.Parse(flagArgs)
+		if err := runInit(*outDir); err != nil {
+			fmt.Fprintf(os.Stderr, "lantern: %v\n", err)
+			os.Exit(1)
+		}
 	case "synth", "validate":
 		flagArgs, positional := reorderArgs(os.Args[2:])
 		_ = fs.Parse(flagArgs)

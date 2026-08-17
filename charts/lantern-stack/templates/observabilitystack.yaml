@@ -41,6 +41,23 @@ data:
           {{- with .Values.backends.metrics.ruleNamespace }}
           ruleNamespace: {{ . }}
           {{- end }}
+        {{- /*
+        Guarded on the exact same condition lantern.tracesEndpoint/
+        logsEndpoint already use: a real endpoint, either bring-your-own
+        (backends.traces.otlpEndpoint set directly) or quickstart (the
+        subchart enabled). Without this guard, "type: tempo"/"type: loki"
+        rendered unconditionally even with tempo.enabled/loki.enabled false
+        and no otlpEndpoint/endpoint set -- this ConfigMap exists
+        specifically so "the chart describes the backends it just
+        installed" (see the doc comment above), and a backend that isn't
+        installed shouldn't be described as existing. `lantern synth`
+        against that stack.yaml wouldn't silently misbehave (BuildInstrumentation
+        already errors loudly on a missing OTLPEndpoint), but the
+        self-description was wrong regardless of whether anything downstream
+        happened to catch it. Found generating a real metrics-only install
+        with `lantern init` and diffing the rendered output.
+        */}}
+        {{- if or .Values.backends.traces.otlpEndpoint (index .Values "tempo" "enabled") }}
         traces:
           type: {{ .Values.backends.traces.type }}
           {{- with (include "lantern.tracesEndpoint" .) }}
@@ -49,6 +66,8 @@ data:
           {{- with .Values.backends.traces.datasource }}
           datasource: {{ . }}
           {{- end }}
+        {{- end }}
+        {{- if or .Values.backends.logs.endpoint (index .Values "loki" "enabled") }}
         logs:
           type: {{ .Values.backends.logs.type }}
           {{- with (include "lantern.logsEndpoint" .) }}
@@ -57,6 +76,7 @@ data:
           {{- with .Values.backends.logs.datasource }}
           datasource: {{ . }}
           {{- end }}
+        {{- end }}
         dashboards:
           type: {{ .Values.backends.dashboards.type }}
           folderStrategy: {{ .Values.backends.dashboards.folderStrategy }}
