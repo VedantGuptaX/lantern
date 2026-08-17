@@ -164,7 +164,7 @@ a real cluster. Save yourself the loop:
 | Add GPU node health or inference-server SLOs | [docs/gpu-and-inference-observability.md](docs/gpu-and-inference-observability.md) |
 | Get logs, traces, or generated dashboards actually showing data | [docs/getting-signals-into-grafana.md](docs/getting-signals-into-grafana.md) |
 | Contribute code back, understand the compiler purity boundary | [CONTRIBUTING.md](CONTRIBUTING.md) |
-| See what's built vs. still ahead | [README.md § Project status](README.md#project-status), [plan.md](plan.md) |
+| See what's built vs. still ahead | [README.md § Project status](README.md#project-status) |
 
 Every one of the docs above stays current with what's actually shipped —
 if something in this file or one of those ever looks stale against what

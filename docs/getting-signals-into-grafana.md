@@ -193,8 +193,8 @@ upgrade to grafana-operator's CRD-based provisioning model (a `Grafana` CR
 plus `GrafanaDashboard`/`GrafanaFolder` CRs reconciled into it) — that gets
 real per-team folders, but needs grafana-operator installed, which this chart
 doesn't do. Every generated dashboard lands in Grafana's default "General"
-folder for now. See `plan.md`'s roadmap (P1: "Grafana folders and team
-RBAC").
+folder for now — "Grafana folders and team RBAC" is the tracked next step
+for this area.
 
 ## Kubernetes Events: not shipped by default, same pattern as OBI
 
