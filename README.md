@@ -281,6 +281,46 @@ by the time the full stack went in), expect to actually hit that math, not
 just clear it comfortably — plan accordingly rather than assuming "quickstart"
 means "always fits."
 
+### Only want some of this? `lantern init` asks first
+
+The quickstart's toggles (`kube-prometheus-stack.enabled`, `loki.enabled`,
+`tempo.enabled`, `collector.enabled`, `opentelemetry-operator.enabled`,
+`logsCollector.enabled`) already let you install any subset — metrics only,
+metrics + logs, everything, whatever fits. The friction was never the
+capability, it was knowing these six flags exist and how they interact.
+`lantern init` is a short interactive prompt that asks what you actually
+want and writes the matching values overlay for you:
+
+```console
+$ lantern init
+Metrics (Prometheus + Grafana)? [Y/n] y
+Logs (Loki)? [Y/n] n
+Traces? [Y/n] n
+GPU node monitoring (DCGM)? Skip if you have no GPU nodes. [y/N] n
+
+Estimated footprint (single-scheduled + per-node, from this session's
+own measurements against a real cluster -- see the table above):
+  kube-prometheus-stack (Prometheus, Alertmanager, Grafana, kube-state-metrics)  245m    592Mi
+  node-exporter                                                                  10m     24Mi  (per node)
+
+  Total: ~245m CPU / ~592Mi RAM, plus ~10m CPU / ~24Mi RAM per node.
+
+Wrote values-init.yaml. Next:
+
+  helm install lantern charts/lantern-stack \
+    -f charts/lantern-stack/values-quickstart.yaml \
+    -f values-init.yaml
+```
+
+Answering "no" to everything but metrics turns off Loki, Tempo, the OTel
+Collector, and the OTel Operator entirely — no CRDs, no webhook, no
+collector Deployment. Just Prometheus, Alertmanager, Grafana, and
+node-exporter. Verified by actually rendering that combination and
+confirming zero Tempo/Loki/OTel objects come out — including Grafana's own
+datasource list, which `values-quickstart.yaml` alone wires to Tempo/Loki
+unconditionally; `init`'s overlay corrects that to match what you actually
+turned on.
+
 ### GPU node prerequisites (NVIDIA GPU Operator / DCGM — not installed by Lantern)
 
 `gpuMonitoring.enabled` assumes the NVIDIA GPU Operator (which includes
@@ -401,6 +441,7 @@ why they're prioritized that way) is tracked separately in
 | Prometheus scrape config | ✅ Done — real bug found and fixed installing on a live cluster: a `ServiceMonitor` could reference a named port that doesn't exist on the target `Service` with no warning; now caught at `-strict` time |
 | SLO burn-rate alerts | ✅ Done — real bug found and fixed on a live cluster: numeric SLO constants (objective, error budget) could serialize as bare YAML numbers instead of quoted strings, which the live `PrometheusRule` CRD schema rejects outright; now emits correctly and verified loading with `health: ok` against a real Prometheus |
 | Workload discovery (`lantern discover`) | ✅ Done — real bug found and fixed against real `kubectl get -A -o yaml` output: the YAML parser rejected valid line-folded scalars that only show up in aged, real-cluster workloads, never in fixtures |
+| Guided install (`lantern init`) | ✅ Done — interactive prompt for which signals you want (metrics/logs/traces/SDK instrumentation/GPU), writes a matching Helm values overlay. Verified by rendering a metrics-only combination and confirming zero Tempo/Loki/OTel objects come out; found and fixed one real gap doing that — `values-quickstart.yaml` wires Tempo/Loki into Grafana's datasources unconditionally, which `init`'s overlay now corrects to match what's actually enabled |
 | GPU node health (DCGM) | ✅ Done — cluster-level, via the `gpuMonitoring` chart toggle |
 | GPU inference-server SLOs (ttft, inter-token latency, queue depth) | ✅ Done — `serviceKind: inference`, see [docs](docs/gpu-and-inference-observability.md) |
 | Preflight safety gate | ✅ Done — `make preflight`, gates `make install-*`, plus an in-cluster hook. Two real bugs found and fixed, both on the same underlying ambiguity: the CRD-ownership check couldn't tell "this release's own brand-new/own-CRD" from "a foreign one" on a fresh install (fixed by counting actual custom-resource instances instead of trusting the CRD-level Helm annotation, which `crds/`-folder CRDs never get regardless of owner) — and then, found on a real second `helm upgrade`, the *same* ambiguity one level down: a nonzero instance count alone still isn't proof of a foreign install, since this release's own already-existing ServiceMonitors/PrometheusRules/Alertmanager/Prometheus CR instances don't carry that CRD-level annotation either. Now checks per-instance ownership (Helm annotation or `lantern.dev/managed=true`) before blocking |
