@@ -305,6 +305,18 @@ config:
     - apiGroups: ["batch"]
       resources: ["jobs", "cronjobs"]
       verbs: ["get", "list", "watch"]
+    # If you're also running this chart's own collector/logsCollector (or
+    # any other OpenTelemetry-Operator-managed workload), their pods are
+    # owned (via a ReplicaSet/DaemonSet) by an OpenTelemetryCollector CR --
+    # found live: without this, every event on one of those pods logs
+    # "Failed to get object metadata ... forbidden" continuously. Not data
+    # loss (the exporter forwards the event anyway, just without the extra
+    # label enrichment that lookup would have added -- same graceful
+    # degradation as an object that's since been deleted), but real,
+    # continuous noise worth avoiding.
+    - apiGroups: ["opentelemetry.io"]
+      resources: ["opentelemetrycollectors"]
+      verbs: ["get", "list", "watch"]
   ---
   apiVersion: rbac.authorization.k8s.io/v1
   kind: ClusterRoleBinding

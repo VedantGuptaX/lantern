@@ -317,3 +317,18 @@ loki:
           index:
             prefix: index_
             period: 24h
+    # Found live on a real cluster: retention_period was never set anywhere
+    # in this chart, and the compactor's own retention deletion defaults to
+    # OFF -- so nothing was ever actually deleting old log data. That's a
+    # slow-motion disk-full failure waiting to happen on a 10Gi PVC with
+    # continuous real ingestion, not a demo-scale inconvenience: once the
+    # volume fills, Loki stops accepting writes entirely and every dashboard
+    # panel and events-pipeline query goes silently empty at once. Matches
+    # the 7-day retention docker/loki-config.yaml already documents for the
+    # standalone Docker stack -- this just makes the Kubernetes chart
+    # actually enforce the number it was always claiming.
+    limits_config:
+      retention_period: 168h
+    compactor:
+      retention_enabled: true
+      delete_request_store: filesystem
