@@ -159,6 +159,53 @@ func TestRenderValuesDataSourcesMatchEnabledBackends(t *testing.T) {
 	}
 }
 
+// TestOperatorEnabledWheneverACollectorCRIsEmitted is the regression test for
+// a real silent-failure bug: init enabled the OTel Collector (and the logs
+// collector) for logs/traces while leaving opentelemetry-operator disabled
+// unless SDK/agent injection was also chosen. Both of those are
+// OpenTelemetryCollector *custom resources* -- without the operator there's
+// no CRD and no reconciler, so templates/collector.yaml and
+// templates/logs-collector.yaml skip them via lantern.otelCollectorCRDReady
+// and the install "succeeds" with nothing shipping any telemetry at all.
+func TestOperatorEnabledWheneverACollectorCRIsEmitted(t *testing.T) {
+	cases := []struct {
+		name string
+		a    initAnswers
+	}{
+		{"logs without SDK agent", initAnswers{Metrics: true, Logs: true}},
+		{"traces (eBPF) without SDK agent", initAnswers{Metrics: true, Traces: true}},
+		{"logs and traces, still no SDK agent", initAnswers{Metrics: true, Logs: true, Traces: true}},
+		{"logs only, no metrics either", initAnswers{Logs: true}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if !c.a.collectorNeeded() {
+				t.Fatalf("test setup wrong: expected this combination to need a collector")
+			}
+			if !c.a.operatorNeeded() {
+				t.Errorf("operatorNeeded() = false, but a collector CR will be emitted -- " +
+					"the CR would be silently skipped with no operator to own its CRD")
+			}
+			mustContain(t, renderValues(c.a), "opentelemetry-operator:\n  enabled: true")
+		})
+	}
+}
+
+// The other direction: no collector CR means the operator is real, avoidable
+// footprint (CRDs, a webhook, a controller Deployment) and should stay off.
+func TestOperatorDisabledWhenNoCollectorCRIsEmitted(t *testing.T) {
+	for _, a := range []initAnswers{
+		{Metrics: true},
+		{Metrics: true, GPU: true},
+		{},
+	} {
+		if a.operatorNeeded() {
+			t.Errorf("%+v: operatorNeeded() = true with no collector CR to reconcile", a)
+		}
+		mustContain(t, renderValues(a), "opentelemetry-operator:\n  enabled: false")
+	}
+}
+
 func TestRenderValuesNoDataSourcesBlockWhenMetricsOff(t *testing.T) {
 	out := renderValues(initAnswers{Metrics: false, Traces: true, Logs: true})
 	if strings.Contains(out, "additionalDataSources") {

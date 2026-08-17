@@ -28,6 +28,29 @@ func (a initAnswers) collectorNeeded() bool {
 	return a.Logs || a.Traces || a.SDKAgent
 }
 
+// operatorNeeded reports whether the OpenTelemetry Operator subchart must be
+// installed.
+//
+// It is NOT just "did the user ask for SDK/agent injection". Both
+// templates/collector.yaml and templates/logs-collector.yaml emit
+// OpenTelemetryCollector *custom resources*, which need the operator twice
+// over: it owns the CRD those resources are validated against, and it's the
+// controller that reconciles them into a real Deployment/DaemonSet. Nothing
+// runs without it.
+//
+// Getting this wrong fails silently, which is why it's worth its own
+// function and its own tests: both templates gate their CR on
+// lantern.otelCollectorCRDReady (`.Capabilities.APIVersions.Has ...`), so on
+// a cluster with no operator the CRD doesn't exist, the guard is false, and
+// the CRs are simply skipped -- no error at install time, no warning. The
+// user gets Loki and/or Tempo running with nothing shipping to them and
+// dashboards that stay empty forever. Found by rendering every init
+// combination and checking which objects actually came out, not by reading
+// the templates.
+func (a initAnswers) operatorNeeded() bool {
+	return a.collectorNeeded()
+}
+
 // promptYesNo asks a yes/no question with a default, reading from r one line
 // at a time and writing the prompt (and any re-prompt on bad input) to w.
 // Empty input accepts the default -- this is what lets a user hammer enter
@@ -152,7 +175,7 @@ func renderValues(a initAnswers) string {
 	fmt.Fprintf(&b, "logsCollector:\n  enabled: %v\n\n", a.Logs)
 	fmt.Fprintf(&b, "tempo:\n  enabled: %v\n\n", a.Traces)
 	fmt.Fprintf(&b, "collector:\n  enabled: %v\n\n", a.collectorNeeded())
-	fmt.Fprintf(&b, "opentelemetry-operator:\n  enabled: %v\n\n", a.SDKAgent)
+	fmt.Fprintf(&b, "opentelemetry-operator:\n  enabled: %v\n\n", a.operatorNeeded())
 	fmt.Fprintf(&b, "gpuMonitoring:\n  enabled: %v\n", a.GPU)
 
 	if a.Traces && !a.SDKAgent {
@@ -185,7 +208,7 @@ func resourceEstimate(a initAnswers) string {
 		rows = append(rows, row{"kube-prometheus-stack (Prometheus, Alertmanager, Grafana, kube-state-metrics)", 245, 592, 0, 0})
 		rows = append(rows, row{"node-exporter", 0, 0, 10, 24})
 	}
-	if a.SDKAgent {
+	if a.operatorNeeded() {
 		rows = append(rows, row{"OTel Operator", 30, 64, 0, 0})
 	}
 	if a.collectorNeeded() {
