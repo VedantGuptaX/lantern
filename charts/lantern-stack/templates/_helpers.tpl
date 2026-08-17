@@ -82,10 +82,28 @@ Mirrors kube-prometheus-stack.fullname's own logic, including the
 {{ include "lantern.kubePrometheusStackFullname" . }}-prometheus.{{ include "lantern.namespace" . }}:9090
 {{- end -}}
 
+{{/*
+kube-prometheus-stack.enabled turns on the subchart, but the subchart has
+its OWN independent prometheus.enabled underneath it (Grafana, Alertmanager,
+and kube-state-metrics can each be toggled separately from Prometheus
+itself) -- a real, deliberate feature of that subchart, not a corner case.
+Checking only the outer toggle here would repeat exactly the bug just fixed
+for traces/logs in observabilitystack.yaml: claim a working Prometheus
+endpoint exists when kube-prometheus-stack is on for Grafana alone and its
+own prometheus.enabled is false. Grafana without a scraped-metrics backend
+is a real combination -- e.g. wanting a UI for Loki/Tempo without also
+running Prometheus/Alertmanager/kube-state-metrics.
+*/}}
+{{- define "lantern.metricsBackendReady" -}}
+{{- if and (index .Values "kube-prometheus-stack" "enabled") (index .Values "kube-prometheus-stack" "prometheus" "enabled") -}}
+true
+{{- end -}}
+{{- end -}}
+
 {{- define "lantern.metricsRemoteWrite" -}}
 {{- if .Values.backends.metrics.remoteWrite -}}
 {{ .Values.backends.metrics.remoteWrite }}
-{{- else if (index .Values "kube-prometheus-stack" "enabled") -}}
+{{- else if (include "lantern.metricsBackendReady" .) -}}
 http://{{ include "lantern.prometheusService" . }}/api/v1/write
 {{- end -}}
 {{- end -}}
@@ -93,7 +111,7 @@ http://{{ include "lantern.prometheusService" . }}/api/v1/write
 {{- define "lantern.metricsQueryURL" -}}
 {{- if .Values.backends.metrics.queryURL -}}
 {{ .Values.backends.metrics.queryURL }}
-{{- else if (index .Values "kube-prometheus-stack" "enabled") -}}
+{{- else if (include "lantern.metricsBackendReady" .) -}}
 http://{{ include "lantern.prometheusService" . }}
 {{- end -}}
 {{- end -}}
