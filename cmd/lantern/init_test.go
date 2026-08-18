@@ -68,6 +68,20 @@ func TestRunInitPromptsResolvesEachAnswer(t *testing.T) {
 			input: "y\ny\ny\nn\ny\n",
 			want:  initAnswers{Metrics: true, Logs: true, Traces: true, SDKAgent: false, GPU: true},
 		},
+		{
+			// GPU monitoring is a bare ServiceMonitor/PrometheusRule with no
+			// standalone value -- meaningless without a real Prometheus to
+			// scrape and evaluate it, and (unlike logs/traces) there's no
+			// trimmed sub-toggle path for it because its CRDs come from
+			// kube-prometheus-stack's own nested crds subchart, which Helm
+			// skips entirely when the parent's enabled condition is false.
+			// The question must not even be asked when metrics is off --
+			// if it were and this input answered "y" to it, GPU would come
+			// back true here and the test would catch the regression.
+			name:  "metrics declined skips the GPU question entirely",
+			input: "n\nn\nn\n",
+			want:  initAnswers{Metrics: false, Logs: false, Traces: false, SDKAgent: false, GPU: false},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -159,11 +173,121 @@ func TestRenderValuesDataSourcesMatchEnabledBackends(t *testing.T) {
 	}
 }
 
-func TestRenderValuesNoDataSourcesBlockWhenMetricsOff(t *testing.T) {
-	out := renderValues(initAnswers{Metrics: false, Traces: true, Logs: true})
-	if strings.Contains(out, "additionalDataSources") {
-		t.Errorf("additionalDataSources should not appear when Grafana itself isn't installed:\n%s", out)
+// TestOperatorEnabledWheneverACollectorCRIsEmitted is the regression test for
+// a real silent-failure bug: init enabled the OTel Collector (and the logs
+// collector) for logs/traces while leaving opentelemetry-operator disabled
+// unless SDK/agent injection was also chosen. Both of those are
+// OpenTelemetryCollector *custom resources* -- without the operator there's
+// no CRD and no reconciler, so templates/collector.yaml and
+// templates/logs-collector.yaml skip them via lantern.otelCollectorCRDReady
+// and the install "succeeds" with nothing shipping any telemetry at all.
+func TestOperatorEnabledWheneverACollectorCRIsEmitted(t *testing.T) {
+	cases := []struct {
+		name string
+		a    initAnswers
+	}{
+		{"logs without SDK agent", initAnswers{Metrics: true, Logs: true}},
+		{"traces (eBPF) without SDK agent", initAnswers{Metrics: true, Traces: true}},
+		{"logs and traces, still no SDK agent", initAnswers{Metrics: true, Logs: true, Traces: true}},
+		{"logs only, no metrics either", initAnswers{Logs: true}},
 	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if !c.a.collectorNeeded() {
+				t.Fatalf("test setup wrong: expected this combination to need a collector")
+			}
+			if !c.a.operatorNeeded() {
+				t.Errorf("operatorNeeded() = false, but a collector CR will be emitted -- " +
+					"the CR would be silently skipped with no operator to own its CRD")
+			}
+			mustContain(t, renderValues(c.a), "opentelemetry-operator:\n  enabled: true")
+		})
+	}
+}
+
+// The other direction: no collector CR means the operator is real, avoidable
+// footprint (CRDs, a webhook, a controller Deployment) and should stay off.
+func TestOperatorDisabledWhenNoCollectorCRIsEmitted(t *testing.T) {
+	for _, a := range []initAnswers{
+		{Metrics: true},
+		{Metrics: true, GPU: true},
+		{},
+	} {
+		if a.operatorNeeded() {
+			t.Errorf("%+v: operatorNeeded() = true with no collector CR to reconcile", a)
+		}
+		mustContain(t, renderValues(a), "opentelemetry-operator:\n  enabled: false")
+	}
+}
+
+// TestGrafanaStaysAvailableForLogsOrTracesWithoutMetrics is the regression
+// test for a real UX-breaking bug: Grafana ships ONLY inside the
+// kube-prometheus-stack subchart, so answering "no" to the metrics question
+// (worded "Prometheus + Grafana") for a logs- or traces-only install
+// produced a fully working Loki/Tempo pipeline with no UI anywhere to look
+// at it.
+func TestGrafanaStaysAvailableForLogsOrTracesWithoutMetrics(t *testing.T) {
+	cases := []struct {
+		name string
+		a    initAnswers
+	}{
+		{"logs without metrics", initAnswers{Logs: true}},
+		{"traces without metrics", initAnswers{Traces: true}},
+		{"both without metrics", initAnswers{Logs: true, Traces: true}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if !c.a.grafanaOnly() {
+				t.Fatalf("test setup wrong: expected this combination to trigger grafanaOnly")
+			}
+			out := renderValues(c.a)
+			mustContain(t, out, "kube-prometheus-stack:\n  enabled: true")
+			mustContain(t, out, "prometheus:\n    enabled: false")
+			mustContain(t, out, "alertmanager:\n    enabled: false")
+			mustContain(t, out, "kubeStateMetrics:\n    enabled: false")
+			// The upstream subchart's default Grafana datasource is gated
+			// only on grafana.enabled, not on its own prometheus.enabled --
+			// without this override Grafana would carry a datasource
+			// pointed at a Prometheus this combination never installs.
+			mustContain(t, out, "defaultDatasourceEnabled: false")
+			// Exactly one "grafana:" key -- a second one would silently
+			// clobber whichever came first in real YAML parsers.
+			if n := strings.Count(out, "\n  grafana:\n"); n != 1 {
+				t.Errorf("expected exactly one top-level grafana: key, found %d in:\n%s", n, out)
+			}
+		})
+	}
+}
+
+func TestGrafanaOnlyFalseWhenMetricsAnsweredYes(t *testing.T) {
+	a := initAnswers{Metrics: true, Logs: true}
+	if a.grafanaOnly() {
+		t.Error("grafanaOnly() should be false once Metrics is true -- the full bundle covers Grafana already")
+	}
+	if !a.grafanaNeeded() {
+		t.Error("grafanaNeeded() should still be true")
+	}
+}
+
+func TestGrafanaNotNeededWithNothingSelected(t *testing.T) {
+	a := initAnswers{}
+	if a.grafanaNeeded() {
+		t.Error("grafanaNeeded() should be false with nothing selected at all")
+	}
+	mustContain(t, renderValues(a), "kube-prometheus-stack:\n  enabled: false")
+}
+
+// This used to assert the opposite: that answering "no" to metrics meant no
+// Grafana at all, and therefore no additionalDataSources block. That was
+// exactly the bug TestGrafanaStaysAvailableForLogsOrTracesWithoutMetrics now
+// guards against -- Grafana stays installed via grafanaOnly(), so the
+// datasources block correctly still appears. The genuinely-no-Grafana case
+// is TestGrafanaNotNeededWithNothingSelected instead.
+func TestRenderValuesDataSourcesBlockPresentWhenGrafanaOnly(t *testing.T) {
+	out := renderValues(initAnswers{Metrics: false, Traces: true, Logs: true})
+	mustContain(t, out, "additionalDataSources:")
+	mustContain(t, out, "name: Tempo")
+	mustContain(t, out, "name: Loki")
 }
 
 func mustContain(t *testing.T, haystack, needle string) {

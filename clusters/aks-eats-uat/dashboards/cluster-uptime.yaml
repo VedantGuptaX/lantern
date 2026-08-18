@@ -1,0 +1,169 @@
+apiVersion: v1
+data:
+  cluster-uptime.json: "{\n  \"title\": \"aks-eats-uat: Cluster & Service Uptime\",\n  \"uid\": \"eats-uat-uptime\"\
+    ,\n  \"tags\": [\n    \"lantern\",\n    \"uptime\"\n  ],\n  \"timezone\": \"browser\",\n  \"refresh\"\
+    : \"30s\",\n  \"time\": {\n    \"from\": \"now-6h\",\n    \"to\": \"now\"\n  },\n  \"panels\": [\n\
+    \    {\n      \"id\": 1,\n      \"type\": \"row\",\n      \"title\": \"At a glance\",\n      \"gridPos\"\
+    : {\n        \"h\": 1,\n        \"w\": 24,\n        \"x\": 0,\n        \"y\": 0\n      }\n    },\n\
+    \    {\n      \"id\": 2,\n      \"type\": \"stat\",\n      \"title\": \"Nodes Up\",\n      \"gridPos\"\
+    : {\n        \"h\": 5,\n        \"w\": 6,\n        \"x\": 0,\n        \"y\": 1\n      },\n      \"\
+    datasource\": {\n        \"type\": \"prometheus\",\n        \"uid\": \"prometheus\"\n      },\n  \
+    \    \"targets\": [\n        {\n          \"expr\": \"sum(up{job=\\\"node-exporter\\\"})\",\n    \
+    \      \"legendFormat\": \"up\",\n          \"refId\": \"A\"\n        },\n        {\n          \"\
+    expr\": \"count(up{job=\\\"node-exporter\\\"})\",\n          \"legendFormat\": \"total\",\n      \
+    \    \"refId\": \"B\"\n        }\n      ],\n      \"fieldConfig\": {\n        \"defaults\": {\n  \
+    \        \"thresholds\": {\n            \"mode\": \"absolute\",\n            \"steps\": [\n      \
+    \        {\n                \"color\": \"red\",\n                \"value\": null\n              },\n\
+    \              {\n                \"color\": \"green\",\n                \"value\": 2\n          \
+    \    }\n            ]\n          },\n          \"mappings\": [],\n          \"unit\": \"short\"\n\
+    \        },\n        \"overrides\": []\n      },\n      \"options\": {\n        \"reduceOptions\"\
+    : {\n          \"calcs\": [\n            \"lastNotNull\"\n          ]\n        },\n        \"textMode\"\
+    : \"value_and_name\",\n        \"colorMode\": \"background\"\n      }\n    },\n    {\n      \"id\"\
+    : 3,\n      \"type\": \"stat\",\n      \"title\": \"Core Services Healthy\",\n      \"description\"\
+    : \"Deployments (of the 9 discovered by lantern discover) with all desired replicas Available.\",\n\
+    \      \"gridPos\": {\n        \"h\": 5,\n        \"w\": 6,\n        \"x\": 6,\n        \"y\": 1\n\
+    \      },\n      \"datasource\": {\n        \"type\": \"prometheus\",\n        \"uid\": \"prometheus\"\
+    \n      },\n      \"targets\": [\n        {\n          \"expr\": \"sum(kube_deployment_status_replicas_available{namespace=~\\\
+    \"eats-core|eats-support|cde|haproxy-controller\\\"} >= kube_deployment_spec_replicas{namespace=~\\\
+    \"eats-core|eats-support|cde|haproxy-controller\\\"})\",\n          \"legendFormat\": \"healthy\"\
+    ,\n          \"refId\": \"A\"\n        },\n        {\n          \"expr\": \"count(kube_deployment_spec_replicas{namespace=~\\\
+    \"eats-core|eats-support|cde|haproxy-controller\\\"})\",\n          \"legendFormat\": \"total\",\n\
+    \          \"refId\": \"B\"\n        }\n      ],\n      \"fieldConfig\": {\n        \"defaults\":\
+    \ {\n          \"thresholds\": {\n            \"mode\": \"absolute\",\n            \"steps\": [\n\
+    \              {\n                \"color\": \"red\",\n                \"value\": null\n         \
+    \     },\n              {\n                \"color\": \"yellow\",\n                \"value\": 7\n\
+    \              },\n              {\n                \"color\": \"green\",\n                \"value\"\
+    : 9\n              }\n            ]\n          },\n          \"mappings\": [],\n          \"unit\"\
+    : \"short\"\n        },\n        \"overrides\": []\n      },\n      \"options\": {\n        \"reduceOptions\"\
+    : {\n          \"calcs\": [\n            \"lastNotNull\"\n          ]\n        },\n        \"textMode\"\
+    : \"value_and_name\",\n        \"colorMode\": \"background\"\n      }\n    },\n    {\n      \"id\"\
+    : 4,\n      \"type\": \"gauge\",\n      \"title\": \"Avg CPU Utilization\",\n      \"gridPos\": {\n\
+    \        \"h\": 5,\n        \"w\": 6,\n        \"x\": 12,\n        \"y\": 1\n      },\n      \"datasource\"\
+    : {\n        \"type\": \"prometheus\",\n        \"uid\": \"prometheus\"\n      },\n      \"targets\"\
+    : [\n        {\n          \"expr\": \"avg(1 - avg by (instance) (rate(node_cpu_seconds_total{mode=\\\
+    \"idle\\\"}[5m])))\",\n          \"refId\": \"A\"\n        }\n      ],\n      \"fieldConfig\": {\n\
+    \        \"defaults\": {\n          \"unit\": \"percentunit\",\n          \"min\": 0,\n          \"\
+    max\": 1,\n          \"thresholds\": {\n            \"mode\": \"absolute\",\n            \"steps\"\
+    : [\n              {\n                \"color\": \"green\",\n                \"value\": null\n   \
+    \           },\n              {\n                \"color\": \"yellow\",\n                \"value\"\
+    : 0.7\n              },\n              {\n                \"color\": \"red\",\n                \"\
+    value\": 0.85\n              }\n            ]\n          }\n        },\n        \"overrides\": []\n\
+    \      },\n      \"options\": {\n        \"reduceOptions\": {\n          \"calcs\": [\n          \
+    \  \"lastNotNull\"\n          ]\n        }\n      }\n    },\n    {\n      \"id\": 5,\n      \"type\"\
+    : \"gauge\",\n      \"title\": \"Avg Memory Utilization\",\n      \"gridPos\": {\n        \"h\": 5,\n\
+    \        \"w\": 6,\n        \"x\": 18,\n        \"y\": 1\n      },\n      \"datasource\": {\n    \
+    \    \"type\": \"prometheus\",\n        \"uid\": \"prometheus\"\n      },\n      \"targets\": [\n\
+    \        {\n          \"expr\": \"avg(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))\"\
+    ,\n          \"refId\": \"A\"\n        }\n      ],\n      \"fieldConfig\": {\n        \"defaults\"\
+    : {\n          \"unit\": \"percentunit\",\n          \"min\": 0,\n          \"max\": 1,\n        \
+    \  \"thresholds\": {\n            \"mode\": \"absolute\",\n            \"steps\": [\n            \
+    \  {\n                \"color\": \"green\",\n                \"value\": null\n              },\n \
+    \             {\n                \"color\": \"yellow\",\n                \"value\": 0.7\n        \
+    \      },\n              {\n                \"color\": \"red\",\n                \"value\": 0.85\n\
+    \              }\n            ]\n          }\n        },\n        \"overrides\": []\n      },\n  \
+    \    \"options\": {\n        \"reduceOptions\": {\n          \"calcs\": [\n            \"lastNotNull\"\
+    \n          ]\n        }\n      }\n    },\n    {\n      \"id\": 6,\n      \"type\": \"row\",\n   \
+    \   \"title\": \"Resource utilization by node\",\n      \"gridPos\": {\n        \"h\": 1,\n      \
+    \  \"w\": 24,\n        \"x\": 0,\n        \"y\": 6\n      }\n    },\n    {\n      \"id\": 7,\n   \
+    \   \"type\": \"timeseries\",\n      \"title\": \"CPU Utilization by Node\",\n      \"gridPos\": {\n\
+    \        \"h\": 8,\n        \"w\": 8,\n        \"x\": 0,\n        \"y\": 7\n      },\n      \"datasource\"\
+    : {\n        \"type\": \"prometheus\",\n        \"uid\": \"prometheus\"\n      },\n      \"targets\"\
+    : [\n        {\n          \"expr\": \"1 - avg by (instance) (rate(node_cpu_seconds_total{mode=\\\"\
+    idle\\\"}[5m]))\",\n          \"legendFormat\": \"{{instance}}\",\n          \"refId\": \"A\"\n  \
+    \      }\n      ],\n      \"fieldConfig\": {\n        \"defaults\": {\n          \"unit\": \"percentunit\"\
+    ,\n          \"min\": 0,\n          \"custom\": {\n            \"drawStyle\": \"line\",\n        \
+    \    \"lineWidth\": 2,\n            \"fillOpacity\": 10,\n            \"spanNulls\": true\n      \
+    \    },\n          \"thresholds\": {\n            \"mode\": \"absolute\",\n            \"steps\":\
+    \ [\n              {\n                \"color\": \"green\",\n                \"value\": null\n   \
+    \           },\n              {\n                \"color\": \"yellow\",\n                \"value\"\
+    : 0.7\n              },\n              {\n                \"color\": \"red\",\n                \"\
+    value\": 0.85\n              }\n            ]\n          }\n        },\n        \"overrides\": []\n\
+    \      },\n      \"options\": {\n        \"legend\": {\n          \"displayMode\": \"table\",\n  \
+    \        \"placement\": \"bottom\",\n          \"calcs\": [\n            \"mean\",\n            \"\
+    max\",\n            \"lastNotNull\"\n          ]\n        },\n        \"tooltip\": {\n          \"\
+    mode\": \"multi\"\n        }\n      }\n    },\n    {\n      \"id\": 8,\n      \"type\": \"timeseries\"\
+    ,\n      \"title\": \"Memory Utilization by Node\",\n      \"gridPos\": {\n        \"h\": 8,\n   \
+    \     \"w\": 8,\n        \"x\": 8,\n        \"y\": 7\n      },\n      \"datasource\": {\n        \"\
+    type\": \"prometheus\",\n        \"uid\": \"prometheus\"\n      },\n      \"targets\": [\n       \
+    \ {\n          \"expr\": \"1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)\",\n\
+    \          \"legendFormat\": \"{{instance}}\",\n          \"refId\": \"A\"\n        }\n      ],\n\
+    \      \"fieldConfig\": {\n        \"defaults\": {\n          \"unit\": \"percentunit\",\n       \
+    \   \"min\": 0,\n          \"custom\": {\n            \"drawStyle\": \"line\",\n            \"lineWidth\"\
+    : 2,\n            \"fillOpacity\": 10,\n            \"spanNulls\": true\n          },\n          \"\
+    thresholds\": {\n            \"mode\": \"absolute\",\n            \"steps\": [\n              {\n\
+    \                \"color\": \"green\",\n                \"value\": null\n              },\n      \
+    \        {\n                \"color\": \"yellow\",\n                \"value\": 0.7\n             \
+    \ },\n              {\n                \"color\": \"red\",\n                \"value\": 0.85\n    \
+    \          }\n            ]\n          }\n        },\n        \"overrides\": []\n      },\n      \"\
+    options\": {\n        \"legend\": {\n          \"displayMode\": \"table\",\n          \"placement\"\
+    : \"bottom\",\n          \"calcs\": [\n            \"mean\",\n            \"max\",\n            \"\
+    lastNotNull\"\n          ]\n        },\n        \"tooltip\": {\n          \"mode\": \"multi\"\n  \
+    \      }\n      }\n    },\n    {\n      \"id\": 9,\n      \"type\": \"timeseries\",\n      \"title\"\
+    : \"Disk Utilization by Node (root filesystem)\",\n      \"gridPos\": {\n        \"h\": 8,\n     \
+    \   \"w\": 8,\n        \"x\": 16,\n        \"y\": 7\n      },\n      \"datasource\": {\n        \"\
+    type\": \"prometheus\",\n        \"uid\": \"prometheus\"\n      },\n      \"targets\": [\n       \
+    \ {\n          \"expr\": \"1 - (node_filesystem_avail_bytes{mountpoint=\\\"/\\\", fstype!=\\\"tmpfs\\\
+    \"} / node_filesystem_size_bytes{mountpoint=\\\"/\\\", fstype!=\\\"tmpfs\\\"})\",\n          \"legendFormat\"\
+    : \"{{instance}}\",\n          \"refId\": \"A\"\n        }\n      ],\n      \"fieldConfig\": {\n \
+    \       \"defaults\": {\n          \"unit\": \"percentunit\",\n          \"min\": 0,\n          \"\
+    custom\": {\n            \"drawStyle\": \"line\",\n            \"lineWidth\": 2,\n            \"fillOpacity\"\
+    : 10,\n            \"spanNulls\": true\n          },\n          \"thresholds\": {\n            \"\
+    mode\": \"absolute\",\n            \"steps\": [\n              {\n                \"color\": \"green\"\
+    ,\n                \"value\": null\n              },\n              {\n                \"color\":\
+    \ \"yellow\",\n                \"value\": 0.7\n              },\n              {\n               \
+    \ \"color\": \"red\",\n                \"value\": 0.85\n              }\n            ]\n         \
+    \ }\n        },\n        \"overrides\": []\n      },\n      \"options\": {\n        \"legend\": {\n\
+    \          \"displayMode\": \"table\",\n          \"placement\": \"bottom\",\n          \"calcs\"\
+    : [\n            \"mean\",\n            \"max\",\n            \"lastNotNull\"\n          ]\n     \
+    \   },\n        \"tooltip\": {\n          \"mode\": \"multi\"\n        }\n      }\n    },\n    {\n\
+    \      \"id\": 10,\n      \"type\": \"row\",\n      \"title\": \"Service availability\",\n      \"\
+    gridPos\": {\n        \"h\": 1,\n        \"w\": 24,\n        \"x\": 0,\n        \"y\": 15\n      }\n\
+    \    },\n    {\n      \"id\": 11,\n      \"type\": \"table\",\n      \"title\": \"Deployment availability\
+    \ (tfs-* + ingress)\",\n      \"gridPos\": {\n        \"h\": 8,\n        \"w\": 12,\n        \"x\"\
+    : 0,\n        \"y\": 16\n      },\n      \"datasource\": {\n        \"type\": \"prometheus\",\n  \
+    \      \"uid\": \"prometheus\"\n      },\n      \"targets\": [\n        {\n          \"expr\": \"\
+    kube_deployment_status_replicas_available{namespace=~\\\"eats-core|eats-support|cde|haproxy-controller\\\
+    \"} / kube_deployment_spec_replicas{namespace=~\\\"eats-core|eats-support|cde|haproxy-controller\\\
+    \"}\",\n          \"legendFormat\": \"{{namespace}}/{{deployment}}\",\n          \"refId\": \"A\"\
+    ,\n          \"format\": \"table\",\n          \"instant\": true\n        }\n      ],\n      \"transformations\"\
+    : [\n        {\n          \"id\": \"organize\",\n          \"options\": {\n            \"excludeByName\"\
+    : {\n              \"Time\": true,\n              \"__name__\": true,\n              \"container\"\
+    : true,\n              \"endpoint\": true,\n              \"instance\": true,\n              \"job\"\
+    : true,\n              \"pod\": true,\n              \"service\": true,\n              \"uid\": true\n\
+    \            },\n            \"renameByName\": {\n              \"Value\": \"availability ratio\"\n\
+    \            }\n          }\n        }\n      ],\n      \"fieldConfig\": {\n        \"defaults\":\
+    \ {\n          \"custom\": {\n            \"cellOptions\": {\n              \"type\": \"color-background\"\
+    \n            },\n            \"align\": \"auto\"\n          },\n          \"unit\": \"percentunit\"\
+    ,\n          \"thresholds\": {\n            \"mode\": \"absolute\",\n            \"steps\": [\n  \
+    \            {\n                \"color\": \"red\",\n                \"value\": null\n           \
+    \   },\n              {\n                \"color\": \"yellow\",\n                \"value\": 0.5\n\
+    \              },\n              {\n                \"color\": \"green\",\n                \"value\"\
+    : 1\n              }\n            ]\n          }\n        },\n        \"overrides\": []\n      }\n\
+    \    },\n    {\n      \"id\": 12,\n      \"type\": \"table\",\n      \"title\": \"Container restarts,\
+    \ last 1h (tfs-* + ingress)\",\n      \"gridPos\": {\n        \"h\": 8,\n        \"w\": 12,\n    \
+    \    \"x\": 12,\n        \"y\": 16\n      },\n      \"datasource\": {\n        \"type\": \"prometheus\"\
+    ,\n        \"uid\": \"prometheus\"\n      },\n      \"targets\": [\n        {\n          \"expr\"\
+    : \"increase(kube_pod_container_status_restarts_total{namespace=~\\\"eats-core|eats-support|cde|haproxy-controller\\\
+    \"}[1h])\",\n          \"legendFormat\": \"{{namespace}}/{{pod}}\",\n          \"refId\": \"A\",\n\
+    \          \"format\": \"table\",\n          \"instant\": true\n        }\n      ],\n      \"transformations\"\
+    : [\n        {\n          \"id\": \"organize\",\n          \"options\": {\n            \"excludeByName\"\
+    : {\n              \"Time\": true,\n              \"__name__\": true,\n              \"container\"\
+    : true,\n              \"endpoint\": true,\n              \"instance\": true,\n              \"job\"\
+    : true,\n              \"service\": true,\n              \"uid\": true\n            },\n         \
+    \   \"renameByName\": {\n              \"Value\": \"restarts (1h)\"\n            }\n          }\n\
+    \        }\n      ],\n      \"fieldConfig\": {\n        \"defaults\": {\n          \"custom\": {\n\
+    \            \"cellOptions\": {\n              \"type\": \"color-background\"\n            },\n  \
+    \          \"align\": \"auto\"\n          },\n          \"unit\": \"short\",\n          \"thresholds\"\
+    : {\n            \"mode\": \"absolute\",\n            \"steps\": [\n              {\n            \
+    \    \"color\": \"green\",\n                \"value\": null\n              },\n              {\n \
+    \               \"color\": \"yellow\",\n                \"value\": 1\n              },\n         \
+    \     {\n                \"color\": \"red\",\n                \"value\": 3\n              }\n    \
+    \        ]\n          }\n        },\n        \"overrides\": []\n      }\n    }\n  ],\n  \"schemaVersion\"\
+    : 39\n}\n"
+kind: ConfigMap
+metadata:
+  name: lantern-dashboard-cluster-uptime
+  namespace: observability
+  labels:
+    grafana_dashboard: '1'
+    lantern.dev/managed: 'true'

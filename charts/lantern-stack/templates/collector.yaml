@@ -1,4 +1,4 @@
-{{- if and .Values.collector.enabled (include "lantern.otelCollectorCRDReady" .) }}
+{{- if .Values.collector.enabled }}
 {{/*
 The collector every injected agent exports to.
 
@@ -11,6 +11,75 @@ OpenTelemetry Operator. Enable the subchart, or install the operator yourself
 before enabling this. See lantern.otelCollectorCRDReady in _helpers.tpl for
 why this is also gated on the CRD actually being registered yet.
 */}}
+{{/*
+RBAC for the k8sattributes processor below.
+
+BUG THIS FIXES, found on a real cluster: this collector's config uses the
+k8sattributes processor (it's in all three pipelines) but the chart never
+created a ServiceAccount or any cluster RBAC for it -- only the
+logs-collector got that treatment. The OTel Operator then defaulted the
+collector to a ServiceAccount with no pod read access, and the processor
+failed continuously:
+
+  "Failed to watch *v1.Pod: pods is forbidden: User
+   system:serviceaccount:observability:lantern-collector-collector cannot
+   list resource pods at the cluster scope"
+
+The collector stays Running and telemetry still flows, so nothing looks
+broken -- but every span and metric passing through loses its
+k8s.namespace.name / k8s.pod.name / k8s.deployment.name enrichment, which
+is exactly what dashboards and queries filter on. Rules match the
+logs-collector's, which follow the k8sattributesprocessor README's
+documented minimum.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}-collector
+  namespace: {{ include "lantern.namespace" . }}
+  labels:
+    {{- include "lantern.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-collector
+  labels:
+    {{- include "lantern.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "namespaces", "nodes"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets", "deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-collector
+  labels:
+    {{- include "lantern.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-collector
+    namespace: {{ include "lantern.namespace" . }}
+roleRef:
+  kind: ClusterRole
+  name: {{ .Release.Name }}-collector
+  apiGroup: rbac.authorization.k8s.io
+{{/*
+Only the custom resource is gated on the CRD existing yet -- the RBAC above
+is created unconditionally, matching logs-collector.yaml. On a genuinely
+fresh install the CRD isn't registered when this first renders, and the
+follow-up `helm upgrade` creates the CR against RBAC that's already in
+place.
+*/}}
+{{- if (include "lantern.otelCollectorCRDReady" .) }}
+---
 apiVersion: opentelemetry.io/v1beta1
 kind: OpenTelemetryCollector
 metadata:
@@ -22,6 +91,7 @@ spec:
   mode: deployment
   replicas: {{ .Values.collector.replicas }}
   image: {{ .Values.collector.image }}
+  serviceAccount: {{ .Release.Name }}-collector
   resources:
     {{- toYaml .Values.collector.resources | nindent 4 }}
   config:
@@ -56,10 +126,13 @@ spec:
             - k8s.deployment.name
             - k8s.node.name
 
-      # Cardinality control. policy.maxRouteCardinality in the
-      # ObservabilityStack is the intent; this is where it is enforced on the
-      # data path. High-cardinality identifiers in http.route are the single
-      # most common way a well-meaning team melts a Prometheus instance.
+      # Cardinality mitigation, not enforcement of policy.maxRouteCardinality:
+      # this collapse is fixed and unconditional -- it does not read that
+      # value and applies the same regex regardless of what it's set to.
+      # High-cardinality identifiers in http.route are the single most common
+      # way a well-meaning team melts a Prometheus instance; this catches the
+      # common numeric-ID/UUID case but is not a hard cap at N distinct
+      # values (see api/v1alpha1/types.go's MaxRouteCardinality comment).
       transform/route_cardinality:
         error_mode: ignore
         metric_statements:
@@ -119,4 +192,5 @@ spec:
           receivers: [otlp]
           processors: [memory_limiter, k8sattributes, attributes/deny, batch]
           exporters: [{{ if (include "lantern.logsEndpoint" .) }}otlphttp/logs{{ else }}debug{{ end }}]
+{{- end }}
 {{- end }}

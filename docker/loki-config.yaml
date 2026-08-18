@@ -1,7 +1,8 @@
 # Minimal single-process Loki config: filesystem storage, no object store,
 # no clustering. Same shape as the SingleBinary mode used in
 # charts/lantern-stack's Kubernetes quickstart (schema/store choices carried
-# over directly from that real, verified config) -- correct for local/dev
+# over directly from that real, verified config, including 7-day retention
+# that's actually enforced by the compactor below) -- correct for local/dev
 # use, not for anything you'd run in production or want durable long-term.
 
 auth_enabled: false
@@ -33,7 +34,17 @@ schema_config:
 
 limits_config:
   allow_structured_metadata: true
-  # 7 days. This is a filesystem-backed single instance with no retention
-  # enforcement job running by default -- treat this as "logs eventually
-  # rotate out of the container volume," not a real retention guarantee.
+  # 7 days, now actually enforced -- see compactor below. This used to be
+  # exactly what the old comment here said it was: a number with no
+  # enforcement job running, meaning nothing ever actually deleted old data
+  # regardless of what this said. Fixed the same real way for
+  # charts/lantern-stack's Kubernetes quickstart after finding it there
+  # first: on a small volume with continuous ingestion, unenforced retention
+  # is a slow-motion disk-full failure, not a demo-scale inconvenience --
+  # once the volume fills, Loki stops accepting writes and every dashboard
+  # panel goes silently empty at once.
   retention_period: 168h
+
+compactor:
+  retention_enabled: true
+  delete_request_store: filesystem

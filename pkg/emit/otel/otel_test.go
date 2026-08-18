@@ -111,6 +111,31 @@ func TestInstrumentationRequiresAnEndpoint(t *testing.T) {
 	}
 }
 
+// TestInstrumentationPinsStableHTTPSemconv guards one half of a contract with
+// pkg/emit/prom/sli.go, which queries the STABLE HTTP metric names
+// (http_server_request_duration_seconds_count / http_response_status_code).
+// Auto-instrumentation agents emit the old pre-1.23 names
+// (http_server_duration_milliseconds_count / http_status_code) unless opted
+// in, and the mismatch is silent end to end: metrics get exported, stored,
+// and never matched by a single rule, leaving every SLO alert and dashboard
+// panel empty. Verified on a real cluster before this was added -- 0 series
+// under the queried name, 6 under the emitted one.
+func TestInstrumentationPinsStableHTTPSemconv(t *testing.T) {
+	obj, err := BuildInstrumentation(baseInput())
+	if err != nil {
+		t.Fatalf("BuildInstrumentation: %v", err)
+	}
+	out := obj.YAML()
+	if !strings.Contains(out, "OTEL_SEMCONV_STABILITY_OPT_IN") {
+		t.Fatalf("Instrumentation must pin HTTP semconv stability, got:\n%s", out)
+	}
+	// "http/dup" would also produce the stable names, but doubles HTTP metric
+	// cardinality to keep emitting old ones nothing here queries.
+	if !strings.Contains(out, "value: http\n") {
+		t.Errorf("expected the opt-in value to be exactly \"http\", got:\n%s", out)
+	}
+}
+
 func TestTracesDisabledUsesAlwaysOffSampler(t *testing.T) {
 	in := baseInput()
 	in.TracesEnabled = false

@@ -21,6 +21,7 @@ spec:
       metricRelabelings:
         - action: labeldrop
           regex: email|request_id|session_id|user_id
+  sampleLimit: 25000
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule

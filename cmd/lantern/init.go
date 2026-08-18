@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -19,6 +20,33 @@ type initAnswers struct {
 	GPU      bool // gpuMonitoring (ServiceMonitor/PrometheusRule only -- dcgm-exporter itself is bring-your-own)
 }
 
+// grafanaOnly reports whether the answers want a Grafana UI without the rest
+// of kube-prometheus-stack (Prometheus, Alertmanager, kube-state-metrics).
+//
+// BUG THIS PREVENTS, found by actually rendering "logs=yes, metrics=no":
+// Grafana ships ONLY inside the kube-prometheus-stack subchart in this
+// chart -- answering "no" to the metrics question (worded "Prometheus +
+// Grafana", which is exactly the trap) disabled that whole subchart, which
+// means it also silently threw away the one place you'd ever look at the
+// logs/traces you just asked for. The install "succeeds" and produces a
+// fully working Loki/Tempo pipeline with no UI attached to it at all.
+//
+// kube-prometheus-stack's own values expose prometheus.enabled,
+// alertmanager.enabled and kubeStateMetrics.enabled as toggles independent
+// of grafana.enabled -- a real, deliberate feature of that subchart, not a
+// workaround -- so "Grafana only" is achievable without dragging in
+// footprint nobody asked for.
+func (a initAnswers) grafanaOnly() bool {
+	return !a.Metrics && (a.Logs || a.Traces)
+}
+
+// grafanaNeeded reports whether kube-prometheus-stack must be enabled at
+// all -- for the full bundle, or for grafanaOnly's trimmed-down version of
+// it.
+func (a initAnswers) grafanaNeeded() bool {
+	return a.Metrics || a.grafanaOnly()
+}
+
 // collectorNeeded reports whether the OTel Collector subchart is needed at
 // all. It's the thing every other signal actually routes through: logs and
 // traces both get pushed to it via OTLP, and so does SDK/agent
@@ -26,6 +54,29 @@ type initAnswers struct {
 // never touch it.
 func (a initAnswers) collectorNeeded() bool {
 	return a.Logs || a.Traces || a.SDKAgent
+}
+
+// operatorNeeded reports whether the OpenTelemetry Operator subchart must be
+// installed.
+//
+// It is NOT just "did the user ask for SDK/agent injection". Both
+// templates/collector.yaml and templates/logs-collector.yaml emit
+// OpenTelemetryCollector *custom resources*, which need the operator twice
+// over: it owns the CRD those resources are validated against, and it's the
+// controller that reconciles them into a real Deployment/DaemonSet. Nothing
+// runs without it.
+//
+// Getting this wrong fails silently, which is why it's worth its own
+// function and its own tests: both templates gate their CR on
+// lantern.otelCollectorCRDReady (`.Capabilities.APIVersions.Has ...`), so on
+// a cluster with no operator the CRD doesn't exist, the guard is false, and
+// the CRs are simply skipped -- no error at install time, no warning. The
+// user gets Loki and/or Tempo running with nothing shipping to them and
+// dashboards that stay empty forever. Found by rendering every init
+// combination and checking which objects actually came out, not by reading
+// the templates.
+func (a initAnswers) operatorNeeded() bool {
+	return a.collectorNeeded()
 }
 
 // promptYesNo asks a yes/no question with a default, reading from r one line
@@ -87,8 +138,26 @@ func runInitPrompts(r io.Reader, w io.Writer) (initAnswers, error) {
 			return a, err
 		}
 	}
-	if a.GPU, err = promptYesNo(br, w, "GPU node monitoring (DCGM)? Skip if you have no GPU nodes.", false); err != nil {
-		return a, err
+	// Only asked when Metrics is on, matching the SDK-agent sub-question's
+	// pattern above.
+	//
+	// BUG THIS PREVENTS, found by rendering "metrics=no, gpu=yes": GPU
+	// monitoring is templates/gpu-monitoring.yaml emitting a bare
+	// ServiceMonitor + PrometheusRule, unconditionally -- there's no Grafana-
+	// only-style trimmed path for it the way logs/traces got, because those
+	// CRDs are owned by kube-prometheus-stack's own nested "crds" subchart,
+	// which Helm skips entirely whenever the parent's enabled condition is
+	// false. On a genuinely fresh cluster with no pre-existing Prometheus
+	// Operator CRDs, that combination fails outright at apply time ("no
+	// matches for kind ServiceMonitor"). Unlike Grafana, there's no
+	// standalone value to preserve here either -- a ServiceMonitor/
+	// PrometheusRule pair is meaningless without a real Prometheus to scrape
+	// and evaluate it, so this isn't a case for a trimmed sub-toggle path;
+	// the question just shouldn't be asked.
+	if a.Metrics {
+		if a.GPU, err = promptYesNo(br, w, "GPU node monitoring (DCGM)? Skip if you have no GPU nodes.", false); err != nil {
+			return a, err
+		}
 	}
 
 	return a, nil
@@ -127,8 +196,41 @@ func renderValues(a initAnswers) string {
 	b.WriteString("#     -f charts/lantern-stack/values-quickstart.yaml \\\n")
 	b.WriteString("#     -f <this-file>\n\n")
 
-	fmt.Fprintf(&b, "kube-prometheus-stack:\n  enabled: %v\n", a.Metrics)
-	if a.Metrics {
+	fmt.Fprintf(&b, "kube-prometheus-stack:\n  enabled: %v\n", a.grafanaNeeded())
+	if a.grafanaNeeded() {
+		if a.grafanaOnly() {
+			b.WriteString("  # Metrics answered \"no\", but Grafana is the only place this chart lets\n")
+			b.WriteString("  # you look at logs/traces, so it stays on -- trimmed to just Grafana,\n")
+			b.WriteString("  # without Prometheus/Alertmanager/kube-state-metrics.\n")
+			b.WriteString("  prometheus:\n    enabled: false\n")
+			b.WriteString("  alertmanager:\n    enabled: false\n")
+			b.WriteString("  kubeStateMetrics:\n    enabled: false\n")
+			// prometheusOperator deliberately stays on (the chart's own
+			// default). It's what owns the ServiceMonitor/PrometheusRule
+			// CRDs, and `lantern synth` generates those objects for every
+			// service regardless of this answer -- that's a compiler-level
+			// decision this file doesn't control. Turning the operator off
+			// too would save ~3m CPU / 27Mi and break `kubectl apply` on the
+			// very next `lantern synth` output with a missing-CRD error, a
+			// strictly worse trade.
+		}
+		// Everything Grafana-related has to live under ONE "grafana:" key --
+		// a values file with that key twice is ambiguous YAML and an earlier
+		// draft of this function did exactly that (sidecar overrides in one
+		// block, additionalDataSources in a second "grafana:" block right
+		// after it), which would have silently dropped one or the other
+		// depending on the parser. Built as one block instead.
+		b.WriteString("  grafana:\n")
+		if a.grafanaOnly() {
+			// kube-prometheus-stack's own Grafana datasource ConfigMap adds a
+			// default "Prometheus" datasource gated only on grafana.enabled,
+			// not on its own prometheus.enabled -- so without this, Grafana
+			// would carry a datasource pointed at a Prometheus this
+			// combination never installs. Same class of bug as the Tempo/Loki
+			// one below, this time inherited from the subchart rather than
+			// introduced by values-quickstart.yaml.
+			b.WriteString("    sidecar:\n      datasources:\n        defaultDatasourceEnabled: false\n")
+		}
 		// values-quickstart.yaml wires Tempo and Loki into Grafana as fixed
 		// additionalDataSources regardless of whether those subcharts are
 		// enabled -- pointing Grafana at services that don't exist if you
@@ -139,9 +241,9 @@ func renderValues(a initAnswers) string {
 		// assumed.
 		datasources := traceLokiDataSources(a)
 		if len(datasources) == 0 {
-			b.WriteString("  grafana:\n    additionalDataSources: []\n")
+			b.WriteString("    additionalDataSources: []\n")
 		} else {
-			b.WriteString("  grafana:\n    additionalDataSources:\n")
+			b.WriteString("    additionalDataSources:\n")
 			for _, ds := range datasources {
 				b.WriteString(ds)
 			}
@@ -152,7 +254,7 @@ func renderValues(a initAnswers) string {
 	fmt.Fprintf(&b, "logsCollector:\n  enabled: %v\n\n", a.Logs)
 	fmt.Fprintf(&b, "tempo:\n  enabled: %v\n\n", a.Traces)
 	fmt.Fprintf(&b, "collector:\n  enabled: %v\n\n", a.collectorNeeded())
-	fmt.Fprintf(&b, "opentelemetry-operator:\n  enabled: %v\n\n", a.SDKAgent)
+	fmt.Fprintf(&b, "opentelemetry-operator:\n  enabled: %v\n\n", a.operatorNeeded())
 	fmt.Fprintf(&b, "gpuMonitoring:\n  enabled: %v\n", a.GPU)
 
 	if a.Traces && !a.SDKAgent {
@@ -184,8 +286,14 @@ func resourceEstimate(a initAnswers) string {
 	if a.Metrics {
 		rows = append(rows, row{"kube-prometheus-stack (Prometheus, Alertmanager, Grafana, kube-state-metrics)", 245, 592, 0, 0})
 		rows = append(rows, row{"node-exporter", 0, 0, 10, 24})
+	} else if a.grafanaOnly() {
+		// Measured on a real cluster via `kubectl top pod` against the
+		// Grafana container alone: 10m CPU / 320Mi -- the rest of
+		// kube-prometheus-stack's usual footprint (Prometheus, Alertmanager,
+		// kube-state-metrics) is what this combination trims away.
+		rows = append(rows, row{"Grafana only (Prometheus/Alertmanager/kube-state-metrics off)", 10, 320, 0, 0})
 	}
-	if a.SDKAgent {
+	if a.operatorNeeded() {
 		rows = append(rows, row{"OTel Operator", 30, 64, 0, 0})
 	}
 	if a.collectorNeeded() {
@@ -226,8 +334,21 @@ func runInit(outPath string) error {
 	if outPath == "" {
 		outPath = "values-init.yaml"
 	}
+	// Both of these checks happen BEFORE the first prompt, deliberately.
+	// Failing after the questions throws away answers the user just typed --
+	// found by running `lantern init -o /nonexistent-dir/v.yaml`, which asked
+	// all five questions and only then reported it couldn't write the file.
 	if _, err := os.Stat(outPath); err == nil {
 		return fmt.Errorf("%s already exists; pass -o to write somewhere else", outPath)
+	}
+	if dir := filepath.Dir(outPath); dir != "" {
+		info, err := os.Stat(dir)
+		if err != nil {
+			return fmt.Errorf("cannot write %s: %w", outPath, err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("cannot write %s: %s is not a directory", outPath, dir)
+		}
 	}
 
 	answers, err := runInitPrompts(os.Stdin, os.Stdout)

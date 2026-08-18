@@ -29,6 +29,7 @@ Resolved backends:
   logs                 {{ include "lantern.logsEndpoint" . | default "(NOT SET — set backends.logs.endpoint)" }}
   collector            {{ include "lantern.collectorEndpoint" . | default "(disabled)" }}
 {{ if and (or .Values.collector.enabled .Values.logsCollector.enabled) (not (include "lantern.otelCollectorCRDReady" .)) -}}
+{{- if (index .Values "opentelemetry-operator" "enabled") }}
 NOTE: the OpenTelemetryCollector CRD wasn't registered yet at the start of
 this install, so the collector/logs-collector custom resources above were
 skipped rather than failing the whole release (a genuinely fresh cluster
@@ -42,6 +43,28 @@ will be created now that the CRD exists:
 `make install-quickstart` / `make install-byo` already do this follow-up
 upgrade automatically — this note only matters if you ran `helm install`
 directly.
+{{- else }}
+WARNING: collector.enabled and/or logsCollector.enabled is on, but
+opentelemetry-operator.enabled is false and no OpenTelemetryCollector CRD
+exists on this cluster. Those are custom resources — without an operator to
+own the CRD and reconcile them, they were SKIPPED, and nothing is shipping
+telemetry right now. Re-running this install will NOT fix it; the CRD has to
+come from somewhere first. Pick one:
+
+  * Let this chart install the operator:
+        --set opentelemetry-operator.enabled=true
+    (`lantern init` does this for you whenever you ask for logs or traces.)
+
+  * Or install the OpenTelemetry Operator yourself, then re-run this
+    install — the chart will pick up the CRD and create the collectors.
+
+  * Or, if you already run your own collector elsewhere, turn these off
+        --set collector.enabled=false --set logsCollector.enabled=false
+    and point backends.traces.otlpEndpoint / backends.logs.endpoint at it.
+
+Until one of those happens, Loki/Tempo (if enabled) will run with nothing
+feeding them and their dashboards will stay empty.
+{{- end }}
 {{ end -}}
 
 Next steps

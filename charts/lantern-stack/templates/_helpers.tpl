@@ -43,19 +43,76 @@ http://{{ .Release.Name }}-collector-collector.{{ include "lantern.namespace" . 
 {{- end -}}
 {{- end -}}
 
+{{/*
+The in-cluster Service name kube-prometheus-stack actually creates for
+Prometheus.
+
+This has to replicate that subchart's own naming EXACTLY, and its fullname
+helper truncates to 26 characters -- not Helm's usual 63. For a release
+called "lantern" that makes "lantern-kube-prometheus-stack" become
+"lantern-kube-prometheus-st", and its prometheus/service.yaml then appends
+"-prometheus", giving "lantern-kube-prometheus-st-prometheus".
+
+BUG THIS FIXES, found on a real cluster: this used to hardcode
+"{{ .Release.Name }}-kube-prometheus-prometheus" -- dropping the "st" the
+truncation leaves behind. That name resolves to nothing, so the collector's
+prometheusremotewrite exporter timed out and DROPPED every application
+metric it received ("Permanent error: context deadline exceeded",
+~55 metrics every 10s, continuously). Nothing downstream reported a
+problem: the collector logged at error level inside its own pod and kept
+running, Prometheus was healthy, and the chart installed cleanly. The only
+visible symptom was that every SLI recording rule, per-service dashboard
+panel, and SLO burn-rate alert stayed permanently empty, because the
+metric they all select on (http_server_request_duration_seconds) never
+reached Prometheus at all.
+
+Mirrors kube-prometheus-stack.fullname's own logic, including the
+"release name already contains the chart name" branch.
+*/}}
+{{- define "lantern.kubePrometheusStackFullname" -}}
+{{- $name := "kube-prometheus-stack" -}}
+{{- if contains $name .Release.Name -}}
+{{- .Release.Name | trunc 26 | trimSuffix "-" -}}
+{{- else -}}
+{{- printf "%s-%s" .Release.Name $name | trunc 26 | trimSuffix "-" -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "lantern.prometheusService" -}}
+{{ include "lantern.kubePrometheusStackFullname" . }}-prometheus.{{ include "lantern.namespace" . }}:9090
+{{- end -}}
+
+{{/*
+kube-prometheus-stack.enabled turns on the subchart, but the subchart has
+its OWN independent prometheus.enabled underneath it (Grafana, Alertmanager,
+and kube-state-metrics can each be toggled separately from Prometheus
+itself) -- a real, deliberate feature of that subchart, not a corner case.
+Checking only the outer toggle here would repeat exactly the bug just fixed
+for traces/logs in observabilitystack.yaml: claim a working Prometheus
+endpoint exists when kube-prometheus-stack is on for Grafana alone and its
+own prometheus.enabled is false. Grafana without a scraped-metrics backend
+is a real combination -- e.g. wanting a UI for Loki/Tempo without also
+running Prometheus/Alertmanager/kube-state-metrics.
+*/}}
+{{- define "lantern.metricsBackendReady" -}}
+{{- if and (index .Values "kube-prometheus-stack" "enabled") (index .Values "kube-prometheus-stack" "prometheus" "enabled") -}}
+true
+{{- end -}}
+{{- end -}}
+
 {{- define "lantern.metricsRemoteWrite" -}}
 {{- if .Values.backends.metrics.remoteWrite -}}
 {{ .Values.backends.metrics.remoteWrite }}
-{{- else if (index .Values "kube-prometheus-stack" "enabled") -}}
-http://{{ .Release.Name }}-kube-prometheus-prometheus.{{ include "lantern.namespace" . }}:9090/api/v1/write
+{{- else if (include "lantern.metricsBackendReady" .) -}}
+http://{{ include "lantern.prometheusService" . }}/api/v1/write
 {{- end -}}
 {{- end -}}
 
 {{- define "lantern.metricsQueryURL" -}}
 {{- if .Values.backends.metrics.queryURL -}}
 {{ .Values.backends.metrics.queryURL }}
-{{- else if (index .Values "kube-prometheus-stack" "enabled") -}}
-http://{{ .Release.Name }}-kube-prometheus-prometheus.{{ include "lantern.namespace" . }}:9090
+{{- else if (include "lantern.metricsBackendReady" .) -}}
+http://{{ include "lantern.prometheusService" . }}
 {{- end -}}
 {{- end -}}
 

@@ -1,0 +1,61 @@
+apiVersion: v1
+data:
+  service-traces.json: "{\n  \"title\": \"aks-eats-uat: Service Traces\",\n  \"uid\": \"eats-uat-traces\"\
+    ,\n  \"tags\": [\n    \"lantern\",\n    \"traces\"\n  ],\n  \"timezone\": \"browser\",\n  \"refresh\"\
+    : \"30s\",\n  \"time\": {\n    \"from\": \"now-1h\",\n    \"to\": \"now\"\n  },\n  \"templating\"\
+    : {\n    \"list\": [\n      {\n        \"name\": \"service\",\n        \"type\": \"custom\",\n   \
+    \     \"label\": \"Service\",\n        \"query\": \"tfs-booking-service,tfs-catalogue-service,tfs-identity-service,tfs-notification-service,tfs-orchestration-service,tfs-rostering-service,tfs-service-assignment-service,tfs-payment-service\"\
+    ,\n        \"multi\": false,\n        \"includeAll\": false,\n        \"current\": {}\n      }\n \
+    \   ]\n  },\n  \"panels\": [\n    {\n      \"id\": 1,\n      \"type\": \"stat\",\n      \"title\"\
+    : \"Traces in range \\u2014 $service\",\n      \"gridPos\": {\n        \"h\": 5,\n        \"w\": 6,\n\
+    \        \"x\": 0,\n        \"y\": 0\n      },\n      \"datasource\": {\n        \"type\": \"tempo\"\
+    ,\n        \"uid\": \"tempo-main\"\n      },\n      \"targets\": [\n        {\n          \"query\"\
+    : \"{resource.service.name=\\\"$service\\\"} | count() > 0\",\n          \"queryType\": \"traceql\"\
+    ,\n          \"refId\": \"A\"\n        }\n      ],\n      \"fieldConfig\": {\n        \"defaults\"\
+    : {\n          \"unit\": \"short\"\n        },\n        \"overrides\": []\n      },\n      \"options\"\
+    : {\n        \"reduceOptions\": {\n          \"calcs\": [\n            \"lastNotNull\"\n         \
+    \ ]\n        }\n      }\n    },\n    {\n      \"id\": 2,\n      \"type\": \"stat\",\n      \"title\"\
+    : \"p95 duration \\u2014 $service\",\n      \"description\": \"Empty until at least a few real requests\
+    \ have been traced for this service.\",\n      \"gridPos\": {\n        \"h\": 5,\n        \"w\": 6,\n\
+    \        \"x\": 6,\n        \"y\": 0\n      },\n      \"datasource\": {\n        \"type\": \"tempo\"\
+    ,\n        \"uid\": \"tempo-main\"\n      },\n      \"targets\": [\n        {\n          \"query\"\
+    : \"{resource.service.name=\\\"$service\\\"} | quantile_over_time(duration, .95) by (resource.service.name)\"\
+    ,\n          \"queryType\": \"traceql\",\n          \"refId\": \"A\"\n        }\n      ],\n      \"\
+    fieldConfig\": {\n        \"defaults\": {\n          \"unit\": \"s\",\n          \"thresholds\": {\n\
+    \            \"mode\": \"absolute\",\n            \"steps\": [\n              {\n                \"\
+    color\": \"green\",\n                \"value\": null\n              },\n              {\n        \
+    \        \"color\": \"yellow\",\n                \"value\": 0.3\n              },\n              {\n\
+    \                \"color\": \"red\",\n                \"value\": 1\n              }\n            ]\n\
+    \          }\n        },\n        \"overrides\": []\n      },\n      \"options\": {\n        \"reduceOptions\"\
+    : {\n          \"calcs\": [\n            \"lastNotNull\"\n          ]\n        },\n        \"colorMode\"\
+    : \"value\"\n      }\n    },\n    {\n      \"id\": 3,\n      \"type\": \"text\",\n      \"gridPos\"\
+    : {\n        \"h\": 5,\n        \"w\": 12,\n        \"x\": 12,\n        \"y\": 0\n      },\n     \
+    \ \"options\": {\n        \"mode\": \"markdown\",\n        \"content\": \"**Traces need real traffic\
+    \ to appear.** OBI (the eBPF trace probe) watches `eats-core`/`eats-support`/`cde` and generates a\
+    \ span for every real request each service handles \\u2014 nothing shows here for a service until\
+    \ it actually receives traffic. No action needed; it populates automatically as requests happen.\\\
+    n\\nClick any trace below to open its full span waterfall.\"\n      }\n    },\n    {\n      \"id\"\
+    : 4,\n      \"type\": \"traces\",\n      \"title\": \"Traces \\u2014 $service\",\n      \"gridPos\"\
+    : {\n        \"h\": 18,\n        \"w\": 24,\n        \"x\": 0,\n        \"y\": 5\n      },\n     \
+    \ \"datasource\": {\n        \"type\": \"tempo\",\n        \"uid\": \"tempo-main\"\n      },\n   \
+    \   \"targets\": [\n        {\n          \"query\": \"{resource.service.name=\\\"$service\\\"}\",\n\
+    \          \"queryType\": \"traceql\",\n          \"limit\": 50,\n          \"refId\": \"A\"\n   \
+    \     }\n      ]\n    },\n    {\n      \"id\": 5,\n      \"type\": \"timeseries\",\n      \"title\"\
+    : \"Trace duration over time \\u2014 $service\",\n      \"description\": \"Each point is one trace's\
+    \ total duration. Useful for spotting a latency spike visually before drilling into a specific trace\
+    \ above.\",\n      \"gridPos\": {\n        \"h\": 8,\n        \"w\": 24,\n        \"x\": 0,\n    \
+    \    \"y\": 23\n      },\n      \"datasource\": {\n        \"type\": \"tempo\",\n        \"uid\":\
+    \ \"tempo-main\"\n      },\n      \"targets\": [\n        {\n          \"query\": \"{resource.service.name=\\\
+    \"$service\\\"} | select(duration)\",\n          \"queryType\": \"traceql\",\n          \"refId\"\
+    : \"A\"\n        }\n      ],\n      \"fieldConfig\": {\n        \"defaults\": {\n          \"unit\"\
+    : \"s\",\n          \"custom\": {\n            \"drawStyle\": \"points\",\n            \"pointSize\"\
+    : 6\n          }\n        },\n        \"overrides\": []\n      },\n      \"options\": {\n        \"\
+    legend\": {\n          \"displayMode\": \"hidden\"\n        },\n        \"tooltip\": {\n         \
+    \ \"mode\": \"single\"\n        }\n      }\n    }\n  ],\n  \"schemaVersion\": 39\n}\n"
+kind: ConfigMap
+metadata:
+  name: lantern-dashboard-service-traces
+  namespace: observability
+  labels:
+    grafana_dashboard: '1'
+    lantern.dev/managed: 'true'

@@ -254,8 +254,59 @@ REC_MEM_MI=8000
 
 ALLOC_CPU=$(kubectl get nodes -o json 2>/dev/null | jq -r '[.items[].status.allocatable.cpu] | map(if test("m$") then (.[:-1] | tonumber) else (tonumber * 1000) end) | add')
 ALLOC_MEM_KI=$(kubectl get nodes -o json 2>/dev/null | jq -r '[.items[].status.allocatable.memory] | map(if test("Ki$") then (.[:-2] | tonumber) elif test("Mi$") then (.[:-2] | tonumber * 1024) elif test("Gi$") then (.[:-2] | tonumber * 1024 * 1024) else (tonumber / 1024) end) | add')
-REQ_CPU=$(kubectl get pods -A -o json 2>/dev/null | jq -r '[.items[].spec.containers[].resources.requests.cpu? // "0"] | map(if test("m$") then (.[:-1] | tonumber) else (tonumber * 1000) end) | add')
-REQ_MEM_KI=$(kubectl get pods -A -o json 2>/dev/null | jq -r '[.items[].spec.containers[].resources.requests.memory? // "0"] | map(if test("Ki$") then (.[:-2] | tonumber) elif test("Mi$") then (.[:-2] | tonumber * 1024) elif test("Gi$") then (.[:-2] | tonumber * 1024 * 1024) else 0 end) | add')
+# Two real bugs lived in this calculation, found by comparing its output to
+# `kubectl describe nodes` on a live cluster -- it reported NEGATIVE free CPU
+# (-664m of 3800m allocatable), which is impossible, and blocked an install
+# on math that was simply wrong:
+#
+#   1. It summed every pod in the cluster regardless of phase, including
+#      Succeeded/Failed ones. Terminated pods reserve nothing; three of them
+#      here contributed 1100m of pure phantom demand.
+#   2. It ignored initContainers entirely. That mattered enormously once
+#      OTel agent injection was in play: the injected init container requests
+#      50m, and the app containers it's injected into often declare no
+#      requests at all, so the pod's ENTIRE effective request came from an
+#      init container this script couldn't see.
+#
+# The correct effective request for a pod is what the scheduler actually
+# uses: max( sum(regular containers), max(each init container) ) -- init
+# containers run to completion before the app starts, so they peak rather
+# than accumulate. Native sidecars (init containers with restartPolicy:
+# Always) do run alongside the app, so those are added to the sum instead.
+# With this, the computed total matches `kubectl describe nodes` exactly.
+pod_effective_requests() {
+  local resource="$1" # "cpu" or "memory"
+  kubectl get pods -A -o json 2>/dev/null | jq -r --arg res "$resource" '
+    def to_milli:
+      if . == null or . == "" then 0
+      elif ($res == "cpu") then
+        (if test("m$") then (.[:-1] | tonumber) else (tonumber * 1000) end)
+      else
+        (if test("Ki$") then (.[:-2] | tonumber)
+         elif test("Mi$") then (.[:-2] | tonumber * 1024)
+         elif test("Gi$") then (.[:-2] | tonumber * 1024 * 1024)
+         elif test("Ti$") then (.[:-2] | tonumber * 1024 * 1024 * 1024)
+         elif test("[0-9]$") then (tonumber / 1024)
+         else 0 end)
+      end;
+    [ .items[]
+      | select(.status.phase == "Running" or .status.phase == "Pending")
+      | ( [ (.spec.containers // [])[].resources.requests[$res]? // "0" ]
+          | map(to_milli) | add // 0 ) as $regular
+      | ( [ (.spec.initContainers // [])[]
+            | select(.restartPolicy == "Always")
+            | .resources.requests[$res]? // "0" ]
+          | map(to_milli) | add // 0 ) as $sidecars
+      | ( [ (.spec.initContainers // [])[]
+            | select(.restartPolicy != "Always")
+            | .resources.requests[$res]? // "0" ]
+          | map(to_milli) | max // 0 ) as $init
+      | ($regular + $sidecars) as $running
+      | (if $init > $running then $init else $running end)
+    ] | add // 0'
+}
+REQ_CPU=$(pod_effective_requests cpu)
+REQ_MEM_KI=$(pod_effective_requests memory)
 
 if [ -n "$ALLOC_CPU" ] && [ -n "$ALLOC_MEM_KI" ] && [ "$ALLOC_CPU" != "null" ]; then
   FREE_CPU=$((ALLOC_CPU - ${REQ_CPU:-0}))

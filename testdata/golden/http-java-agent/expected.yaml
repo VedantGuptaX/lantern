@@ -8,6 +8,9 @@ metadata:
     lantern.dev/service: checkout-api
     lantern.dev/team: payments
 spec:
+  env:
+    - name: OTEL_SEMCONV_STABILITY_OPT_IN
+      value: http
   exporter:
     endpoint: http://otel-collector.observability:4318
   propagators:
@@ -45,6 +48,7 @@ spec:
       metricRelabelings:
         - action: labeldrop
           regex: email|request_id|session_id|user_id
+  sampleLimit: 25000
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule

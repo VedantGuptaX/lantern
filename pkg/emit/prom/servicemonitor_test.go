@@ -1,6 +1,9 @@
 package prom
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestServiceMonitorWarnsOnUnverifiedPortGuess is the regression test for a
 // bug found running discover/synth against a real cluster: when
@@ -58,5 +61,58 @@ func TestServiceMonitorNoWarningWhenPortIsExplicit(t *testing.T) {
 func TestServiceMonitorRequiresSelector(t *testing.T) {
 	if _, _, err := BuildServiceMonitor(MonitorInput{Service: "checkout", Namespace: "prod"}); err == nil {
 		t.Error("expected an error when no selector is provided")
+	}
+}
+
+// TestServiceMonitorAppliesSeriesLimit is the regression test for a bug found
+// during a nuclear-test sweep: policy.maxSeriesPerService was never wired
+// into anything the compiler emitted, despite the Policy struct's own doc
+// comment promising "the compiler enforces these; it does not merely warn."
+// A developer setting maxSeriesPerService got zero actual protection. This
+// asserts SeriesLimit now becomes the ServiceMonitor's native sampleLimit
+// field, plus the diagnostic that explains its fail-closed behavior.
+func TestServiceMonitorAppliesSeriesLimit(t *testing.T) {
+	obj, diags, err := BuildServiceMonitor(MonitorInput{
+		Service:     "checkout",
+		Namespace:   "prod",
+		Selector:    map[string]string{"app": "checkout"},
+		Port:        "metrics",
+		SeriesLimit: 25000,
+	})
+	if err != nil {
+		t.Fatalf("BuildServiceMonitor: %v", err)
+	}
+	got := obj.YAML()
+	if !strings.Contains(got, "sampleLimit: 25000") {
+		t.Errorf("expected spec.sampleLimit: 25000 in output, got:\n%s", got)
+	}
+	found := false
+	for _, d := range diags {
+		if d.Level == "info" && strings.Contains(d.Message, "sampleLimit") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected an info diagnostic explaining the sampleLimit fail-closed behavior, got %+v", diags)
+	}
+}
+
+// TestServiceMonitorNoSeriesLimitWhenUnset guards against a regression where
+// SeriesLimit: 0 (the zero value, meaning policy.maxSeriesPerService was
+// never set) would emit sampleLimit: 0 -- which Prometheus would treat as an
+// active zero-sample cap, not "unset", silently killing every scrape.
+func TestServiceMonitorNoSeriesLimitWhenUnset(t *testing.T) {
+	obj, _, err := BuildServiceMonitor(MonitorInput{
+		Service:   "checkout",
+		Namespace: "prod",
+		Selector:  map[string]string{"app": "checkout"},
+		Port:      "metrics",
+	})
+	if err != nil {
+		t.Fatalf("BuildServiceMonitor: %v", err)
+	}
+	got := obj.YAML()
+	if strings.Contains(got, "sampleLimit") {
+		t.Errorf("did not expect sampleLimit in output when SeriesLimit is unset, got:\n%s", got)
 	}
 }

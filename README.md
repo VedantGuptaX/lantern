@@ -11,7 +11,7 @@ Prometheus scrape config, and SLO burn-rate alerts.
 [![Go](https://img.shields.io/badge/go-1.24+-00ADD8.svg)](https://go.dev)
 [![Status](https://img.shields.io/badge/status-alpha%20(P0)-orange.svg)](#project-status)
 
-[Getting Started](GETTING_STARTED.md) · [Design](DESIGN.md) · [Contributing](CONTRIBUTING.md) · [Adopting on a live cluster](docs/adopting-an-existing-cluster.md) · [GPU & inference observability](docs/gpu-and-inference-observability.md) · [Setting up with an AI agent](agent_handoff.md) · [Roadmap](plan.md)
+[Getting Started](GETTING_STARTED.md) · [Design](DESIGN.md) · [Contributing](CONTRIBUTING.md) · [Adopting on a live cluster](docs/adopting-an-existing-cluster.md) · [GPU & inference observability](docs/gpu-and-inference-observability.md) · [Setting up with an AI agent](agent_handoff.md)
 
 </div>
 
@@ -430,8 +430,8 @@ dashboards all confirmed working with real data, from a real multi-service
 deployment, real capacity constraints included. This table is deliberately
 narrow — it only lists what's actually built and tested in the code today.
 Everything still ahead (per-team dashboard folders, the operator, SDKs, and
-why they're prioritized that way) is tracked separately in
-**[plan.md](plan.md)**, so this README doesn't drift into a wishlist.
+why they're prioritized that way) is tracked separately, so this README
+doesn't drift into a wishlist.
 
 | | Status |
 |---|---|
@@ -457,8 +457,8 @@ why they're prioritized that way) is tracked separately in
 Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). The
 highest-value place to help right now is per-team dashboard folders
 (grafana-operator's `GrafanaDashboard`/`GrafanaFolder` CRDs) and actually
-running `helm install` for the first time — see [plan.md](plan.md) for the
-current roadmap and why it's next.
+running `helm install` for the first time — open an issue if you want to
+pick either up and we'll sort out the current state together.
 
 ```bash
 make all      # fmt, vet, test, build
