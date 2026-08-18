@@ -199,18 +199,38 @@ func Compile(svc api.ServiceObservability, stack api.ObservabilityStack, facts F
 
 	if api.BoolValue(svc.Spec.Signals.Metrics, true) && stack.Spec.Backends.Metrics.Operator != "none" {
 		sm, sdiags, err := prom.BuildServiceMonitor(prom.MonitorInput{
-			Service:    name,
-			Namespace:  ns,
-			Selector:   targetSelector(svc),
-			Port:       svc.Spec.Target.MetricsPort,
-			DenyLabels: stack.Spec.Policy.DenyLabels,
-			Labels:     labels,
+			Service:     name,
+			Namespace:   ns,
+			Selector:    targetSelector(svc),
+			Port:        svc.Spec.Target.MetricsPort,
+			DenyLabels:  stack.Spec.Policy.DenyLabels,
+			Labels:      labels,
+			SeriesLimit: stack.Spec.Policy.MaxSeriesPerService,
 		})
 		if err != nil {
 			return out, err
 		}
 		out.Diags = append(out.Diags, liftProm(name, sdiags)...)
 		out.Objects = append(out.Objects, sm)
+
+		if stack.Spec.Policy.MaxRouteCardinality > 0 {
+			// Unlike MaxSeriesPerService, there is no native mechanism to reject
+			// telemetry once distinct http.route values cross a count -- the
+			// collector's transform/route_cardinality processor applies a fixed
+			// regex collapse (numeric IDs, UUIDs) regardless of what this number
+			// is set to. Surface that now rather than leave the field a silent
+			// no-op: a developer tuning this value between synths would see no
+			// effect and have no diagnostic explaining why.
+			out.Diags = append(out.Diags, Diagnostic{
+				Level:   "info",
+				Service: name,
+				Message: fmt.Sprintf(
+					"policy.maxRouteCardinality (%d) is advisory: the collector collapses numeric IDs and "+
+						"UUIDs in http.route unconditionally and does not count distinct values against this "+
+						"number, so changing it has no effect on what's actually enforced",
+					stack.Spec.Policy.MaxRouteCardinality),
+			})
+		}
 	}
 
 	// ---- SLOs and burn-rate alerts -----------------------------------------

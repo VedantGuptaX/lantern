@@ -1,0 +1,210 @@
+apiVersion: v1
+data:
+  investigate.json: "{\n  \"title\": \"aks-eats-uat: Investigate a Point in Time\",\n  \"uid\": \"eats-uat-investigate\"\
+    ,\n  \"tags\": [\n    \"lantern\",\n    \"investigate\"\n  ],\n  \"timezone\": \"browser\",\n  \"\
+    refresh\": \"\",\n  \"time\": {\n    \"from\": \"now-1h\",\n    \"to\": \"now\"\n  },\n  \"templating\"\
+    : {\n    \"list\": [\n      {\n        \"name\": \"namespace\",\n        \"type\": \"query\",\n  \
+    \      \"label\": \"Namespace (logs)\",\n        \"datasource\": {\n          \"type\": \"loki\",\n\
+    \          \"uid\": \"loki-main\"\n        },\n        \"query\": \"label_values({k8s_namespace_name=~\\\
+    \"eats-core|eats-support|cde\\\"}, k8s_namespace_name)\",\n        \"refresh\": 2,\n        \"sort\"\
+    : 1,\n        \"multi\": false,\n        \"includeAll\": true,\n        \"allValue\": \"eats-core|eats-support|cde\"\
+    ,\n        \"current\": {\n          \"text\": \"All\",\n          \"value\": \"$__all\"\n       \
+    \ }\n      },\n      {\n        \"name\": \"pod\",\n        \"type\": \"query\",\n        \"label\"\
+    : \"Pod (logs)\",\n        \"datasource\": {\n          \"type\": \"loki\",\n          \"uid\": \"\
+    loki-main\"\n        },\n        \"query\": \"label_values({k8s_namespace_name=~\\\"$namespace\\\"\
+    }, k8s_pod_name)\",\n        \"refresh\": 2,\n        \"sort\": 1,\n        \"multi\": false,\n  \
+    \      \"includeAll\": true,\n        \"allValue\": \".+\",\n        \"current\": {\n          \"\
+    text\": \"All\",\n          \"value\": \"$__all\"\n        }\n      },\n      {\n        \"name\"\
+    : \"event_namespace\",\n        \"type\": \"query\",\n        \"label\": \"Namespace (events)\",\n\
+    \        \"description\": \"Cluster-wide, not just eats-core/eats-support/cde -- infra-level events\
+    \ (a Tempo OOMKill, a scheduling failure in observability itself) are exactly the kind of thing worth\
+    \ surfacing here too, not just app-namespace churn.\",\n        \"datasource\": {\n          \"type\"\
+    : \"loki\",\n          \"uid\": \"loki-main\"\n        },\n        \"query\": \"label_values({job=\\\
+    \"k8s-events\\\"}, namespace)\",\n        \"refresh\": 2,\n        \"sort\": 1,\n        \"multi\"\
+    : false,\n        \"includeAll\": true,\n        \"allValue\": \".+\",\n        \"current\": {\n \
+    \         \"text\": \"All\",\n          \"value\": \"$__all\"\n        }\n      },\n      {\n    \
+    \    \"name\": \"service\",\n        \"type\": \"custom\",\n        \"label\": \"Service (traces)\"\
+    ,\n        \"query\": \"tfs-booking-service,tfs-catalogue-service,tfs-identity-service,tfs-notification-service,tfs-orchestration-service,tfs-rostering-service,tfs-service-assignment-service,tfs-payment-service\"\
+    ,\n        \"multi\": false,\n        \"includeAll\": true,\n        \"allValue\": \"tfs-booking-service|tfs-catalogue-service|tfs-identity-service|tfs-notification-service|tfs-orchestration-service|tfs-rostering-service|tfs-service-assignment-service|tfs-payment-service\"\
+    ,\n        \"current\": {\n          \"text\": \"All\",\n          \"value\": \"$__all\"\n       \
+    \ }\n      }\n    ]\n  },\n  \"panels\": [\n    {\n      \"id\": 1,\n      \"type\": \"text\",\n \
+    \     \"gridPos\": {\n        \"h\": 3,\n        \"w\": 24,\n        \"x\": 0,\n        \"y\": 0\n\
+    \      },\n      \"options\": {\n        \"mode\": \"markdown\",\n        \"content\": \"**How to\
+    \ use this dashboard:** set the time range in the top-right to the window you're investigating (e.g.\
+    \ `2026-08-15 18:58` to `2026-08-15 19:08` to look at 7:03pm) \\u2014 every panel below re-queries\
+    \ live, nothing here is a static snapshot. Kubernetes Events are watched continuously in the background\
+    \ by `lantern-events-exporter` and pushed straight to Loki as they happen, so historical lookback\
+    \ isn't limited by etcd's ~1h Event TTL anymore. Pick a namespace/pod and service from the dropdowns\
+    \ to narrow the logs, events, and traces panels. **Not included:** GPU metrics (no GPU nodes on this\
+    \ cluster).\"\n      }\n    },\n    {\n      \"id\": 2,\n      \"type\": \"row\",\n      \"title\"\
+    : \"Monitors\",\n      \"gridPos\": {\n        \"h\": 1,\n        \"w\": 24,\n        \"x\": 0,\n\
+    \        \"y\": 3\n      }\n    },\n    {\n      \"id\": 3,\n      \"type\": \"timeseries\",\n   \
+    \   \"title\": \"CPU Utilization by Node\",\n      \"gridPos\": {\n        \"h\": 7,\n        \"w\"\
+    : 8,\n        \"x\": 0,\n        \"y\": 4\n      },\n      \"datasource\": {\n        \"type\": \"\
+    prometheus\",\n        \"uid\": \"prometheus\"\n      },\n      \"targets\": [\n        {\n      \
+    \    \"expr\": \"1 - avg by (instance) (rate(node_cpu_seconds_total{mode=\\\"idle\\\"}[5m]))\",\n\
+    \          \"legendFormat\": \"{{instance}}\",\n          \"refId\": \"A\"\n        }\n      ],\n\
+    \      \"fieldConfig\": {\n        \"defaults\": {\n          \"unit\": \"percentunit\",\n       \
+    \   \"min\": 0,\n          \"custom\": {\n            \"drawStyle\": \"line\",\n            \"lineWidth\"\
+    : 2,\n            \"fillOpacity\": 10,\n            \"spanNulls\": true\n          },\n          \"\
+    thresholds\": {\n            \"mode\": \"absolute\",\n            \"steps\": [\n              {\n\
+    \                \"color\": \"green\",\n                \"value\": null\n              },\n      \
+    \        {\n                \"color\": \"yellow\",\n                \"value\": 0.7\n             \
+    \ },\n              {\n                \"color\": \"red\",\n                \"value\": 0.85\n    \
+    \          }\n            ]\n          }\n        },\n        \"overrides\": []\n      },\n      \"\
+    options\": {\n        \"legend\": {\n          \"displayMode\": \"table\",\n          \"placement\"\
+    : \"bottom\",\n          \"calcs\": [\n            \"mean\",\n            \"max\",\n            \"\
+    lastNotNull\"\n          ]\n        },\n        \"tooltip\": {\n          \"mode\": \"multi\"\n  \
+    \      }\n      }\n    },\n    {\n      \"id\": 4,\n      \"type\": \"timeseries\",\n      \"title\"\
+    : \"Memory Utilization by Node\",\n      \"gridPos\": {\n        \"h\": 7,\n        \"w\": 8,\n  \
+    \      \"x\": 8,\n        \"y\": 4\n      },\n      \"datasource\": {\n        \"type\": \"prometheus\"\
+    ,\n        \"uid\": \"prometheus\"\n      },\n      \"targets\": [\n        {\n          \"expr\"\
+    : \"1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)\",\n          \"legendFormat\"\
+    : \"{{instance}}\",\n          \"refId\": \"A\"\n        }\n      ],\n      \"fieldConfig\": {\n \
+    \       \"defaults\": {\n          \"unit\": \"percentunit\",\n          \"min\": 0,\n          \"\
+    custom\": {\n            \"drawStyle\": \"line\",\n            \"lineWidth\": 2,\n            \"fillOpacity\"\
+    : 10,\n            \"spanNulls\": true\n          },\n          \"thresholds\": {\n            \"\
+    mode\": \"absolute\",\n            \"steps\": [\n              {\n                \"color\": \"green\"\
+    ,\n                \"value\": null\n              },\n              {\n                \"color\":\
+    \ \"yellow\",\n                \"value\": 0.7\n              },\n              {\n               \
+    \ \"color\": \"red\",\n                \"value\": 0.85\n              }\n            ]\n         \
+    \ }\n        },\n        \"overrides\": []\n      },\n      \"options\": {\n        \"legend\": {\n\
+    \          \"displayMode\": \"table\",\n          \"placement\": \"bottom\",\n          \"calcs\"\
+    : [\n            \"mean\",\n            \"max\",\n            \"lastNotNull\"\n          ]\n     \
+    \   },\n        \"tooltip\": {\n          \"mode\": \"multi\"\n        }\n      }\n    },\n    {\n\
+    \      \"id\": 5,\n      \"type\": \"timeseries\",\n      \"title\": \"Disk Utilization by Node (root\
+    \ filesystem)\",\n      \"gridPos\": {\n        \"h\": 7,\n        \"w\": 8,\n        \"x\": 16,\n\
+    \        \"y\": 4\n      },\n      \"datasource\": {\n        \"type\": \"prometheus\",\n        \"\
+    uid\": \"prometheus\"\n      },\n      \"targets\": [\n        {\n          \"expr\": \"1 - (node_filesystem_avail_bytes{mountpoint=\\\
+    \"/\\\", fstype!=\\\"tmpfs\\\"} / node_filesystem_size_bytes{mountpoint=\\\"/\\\", fstype!=\\\"tmpfs\\\
+    \"})\",\n          \"legendFormat\": \"{{instance}}\",\n          \"refId\": \"A\"\n        }\n  \
+    \    ],\n      \"fieldConfig\": {\n        \"defaults\": {\n          \"unit\": \"percentunit\",\n\
+    \          \"min\": 0,\n          \"custom\": {\n            \"drawStyle\": \"line\",\n          \
+    \  \"lineWidth\": 2,\n            \"fillOpacity\": 10,\n            \"spanNulls\": true\n        \
+    \  },\n          \"thresholds\": {\n            \"mode\": \"absolute\",\n            \"steps\": [\n\
+    \              {\n                \"color\": \"green\",\n                \"value\": null\n       \
+    \       },\n              {\n                \"color\": \"yellow\",\n                \"value\": 0.7\n\
+    \              },\n              {\n                \"color\": \"red\",\n                \"value\"\
+    : 0.85\n              }\n            ]\n          }\n        },\n        \"overrides\": []\n     \
+    \ },\n      \"options\": {\n        \"legend\": {\n          \"displayMode\": \"table\",\n       \
+    \   \"placement\": \"bottom\",\n          \"calcs\": [\n            \"mean\",\n            \"max\"\
+    ,\n            \"lastNotNull\"\n          ]\n        },\n        \"tooltip\": {\n          \"mode\"\
+    : \"multi\"\n        }\n      }\n    },\n    {\n      \"id\": 6,\n      \"type\": \"timeseries\",\n\
+    \      \"title\": \"Container restarts in this window\",\n      \"description\": \"A spike here at\
+    \ your investigated time usually means a crash/OOM/eviction worth cross-checking against the logs\
+    \ panel below.\",\n      \"gridPos\": {\n        \"h\": 6,\n        \"w\": 24,\n        \"x\": 0,\n\
+    \        \"y\": 11\n      },\n      \"datasource\": {\n        \"type\": \"prometheus\",\n       \
+    \ \"uid\": \"prometheus\"\n      },\n      \"targets\": [\n        {\n          \"expr\": \"sum by\
+    \ (namespace, pod) (changes(kube_pod_container_status_restarts_total{namespace=~\\\"eats-core|eats-support|cde|haproxy-controller\\\
+    \"}[5m]))\",\n          \"legendFormat\": \"{{namespace}}/{{pod}}\",\n          \"refId\": \"A\"\n\
+    \        }\n      ],\n      \"fieldConfig\": {\n        \"defaults\": {\n          \"unit\": \"short\"\
+    ,\n          \"custom\": {\n            \"drawStyle\": \"bars\",\n            \"fillOpacity\": 50\n\
+    \          }\n        },\n        \"overrides\": []\n      },\n      \"options\": {\n        \"legend\"\
+    : {\n          \"displayMode\": \"table\",\n          \"placement\": \"bottom\",\n          \"calcs\"\
+    : [\n            \"sum\"\n          ]\n        },\n        \"tooltip\": {\n          \"mode\": \"\
+    multi\"\n        }\n      }\n    },\n    {\n      \"id\": 15,\n      \"type\": \"row\",\n      \"\
+    title\": \"Kubernetes Events in this window \\u2014 $event_namespace\",\n      \"gridPos\": {\n  \
+    \      \"h\": 1,\n        \"w\": 24,\n        \"x\": 0,\n        \"y\": 17\n      }\n    },\n    {\n\
+    \      \"id\": 16,\n      \"type\": \"stat\",\n      \"title\": \"Warning events \\u2014 $event_namespace\"\
+    ,\n      \"description\": \"Count of Warning-type events (OOMKilled, Evicted, BackOff, FailedScheduling,\
+    \ Unhealthy, etc.) in this window. Zero doesn't mean nothing happened -- check the log panel below\
+    \ too.\",\n      \"gridPos\": {\n        \"h\": 4,\n        \"w\": 6,\n        \"x\": 0,\n       \
+    \ \"y\": 18\n      },\n      \"datasource\": {\n        \"type\": \"loki\",\n        \"uid\": \"loki-main\"\
+    \n      },\n      \"targets\": [\n        {\n          \"expr\": \"sum(count_over_time({job=\\\"k8s-events\\\
+    \", namespace=~\\\"$event_namespace\\\", type=\\\"Warning\\\"}[$__range]))\",\n          \"refId\"\
+    : \"A\"\n        }\n      ],\n      \"fieldConfig\": {\n        \"defaults\": {\n          \"unit\"\
+    : \"short\",\n          \"thresholds\": {\n            \"mode\": \"absolute\",\n            \"steps\"\
+    : [\n              {\n                \"color\": \"green\",\n                \"value\": null\n   \
+    \           },\n              {\n                \"color\": \"yellow\",\n                \"value\"\
+    : 1\n              },\n              {\n                \"color\": \"red\",\n                \"value\"\
+    : 5\n              }\n            ]\n          }\n        },\n        \"overrides\": []\n      },\n\
+    \      \"options\": {\n        \"reduceOptions\": {\n          \"calcs\": [\n            \"lastNotNull\"\
+    \n          ]\n        },\n        \"colorMode\": \"background\"\n      }\n    },\n    {\n      \"\
+    id\": 17,\n      \"type\": \"stat\",\n      \"title\": \"Total events \\u2014 $event_namespace\",\n\
+    \      \"gridPos\": {\n        \"h\": 4,\n        \"w\": 6,\n        \"x\": 6,\n        \"y\": 18\n\
+    \      },\n      \"datasource\": {\n        \"type\": \"loki\",\n        \"uid\": \"loki-main\"\n\
+    \      },\n      \"targets\": [\n        {\n          \"expr\": \"sum(count_over_time({job=\\\"k8s-events\\\
+    \", namespace=~\\\"$event_namespace\\\"}[$__range]))\",\n          \"refId\": \"A\"\n        }\n \
+    \     ],\n      \"fieldConfig\": {\n        \"defaults\": {\n          \"unit\": \"short\"\n     \
+    \   },\n        \"overrides\": []\n      },\n      \"options\": {\n        \"reduceOptions\": {\n\
+    \          \"calcs\": [\n            \"lastNotNull\"\n          ]\n        }\n      }\n    },\n  \
+    \  {\n      \"id\": 18,\n      \"type\": \"logs\",\n      \"title\": \"Events \\u2014 $event_namespace\"\
+    ,\n      \"description\": \"Warning-type events are the ones worth reading first -- Normal events\
+    \ (Scheduled, Pulled, Started, etc.) are routine and mostly useful for confirming timing.\",\n   \
+    \   \"gridPos\": {\n        \"h\": 10,\n        \"w\": 24,\n        \"x\": 0,\n        \"y\": 22\n\
+    \      },\n      \"datasource\": {\n        \"type\": \"loki\",\n        \"uid\": \"loki-main\"\n\
+    \      },\n      \"targets\": [\n        {\n          \"expr\": \"{job=\\\"k8s-events\\\", namespace=~\\\
+    \"$event_namespace\\\"} | json | line_format \\\"[{{.type}}] {{.reason}} \\\\u2014 {{.involvedObject_kind}}/{{.involvedObject_name}}:\
+    \ {{.message}}\\\"\",\n          \"refId\": \"A\"\n        }\n      ],\n      \"options\": {\n   \
+    \     \"showTime\": true,\n        \"showLabels\": true,\n        \"wrapLogMessage\": true,\n    \
+    \    \"prettifyLogMessage\": false,\n        \"enableLogDetails\": true,\n        \"dedupStrategy\"\
+    : \"none\",\n        \"sortOrder\": \"Descending\"\n      }\n    },\n    {\n      \"id\": 7,\n   \
+    \   \"type\": \"row\",\n      \"title\": \"Logs in this window \\u2014 $namespace / $pod\",\n    \
+    \  \"gridPos\": {\n        \"h\": 1,\n        \"w\": 24,\n        \"x\": 0,\n        \"y\": 32\n \
+    \     }\n    },\n    {\n      \"id\": 8,\n      \"type\": \"timeseries\",\n      \"title\": \"Log\
+    \ volume \\u2014 $namespace / $pod\",\n      \"gridPos\": {\n        \"h\": 5,\n        \"w\": 24,\n\
+    \        \"x\": 0,\n        \"y\": 33\n      },\n      \"datasource\": {\n        \"type\": \"loki\"\
+    ,\n        \"uid\": \"loki-main\"\n      },\n      \"targets\": [\n        {\n          \"expr\":\
+    \ \"sum(count_over_time({k8s_namespace_name=~\\\"$namespace\\\", k8s_pod_name=~\\\"$pod\\\"}[1m]))\"\
+    ,\n          \"legendFormat\": \"lines/min\",\n          \"refId\": \"A\"\n        }\n      ],\n \
+    \     \"fieldConfig\": {\n        \"defaults\": {\n          \"custom\": {\n            \"drawStyle\"\
+    : \"bars\",\n            \"fillOpacity\": 30\n          },\n          \"thresholds\": {\n        \
+    \    \"mode\": \"absolute\",\n            \"steps\": [\n              {\n                \"color\"\
+    : \"blue\",\n                \"value\": null\n              }\n            ]\n          }\n      \
+    \  },\n        \"overrides\": []\n      },\n      \"options\": {\n        \"legend\": {\n        \
+    \  \"displayMode\": \"hidden\"\n        },\n        \"tooltip\": {\n          \"mode\": \"single\"\
+    \n        }\n      }\n    },\n    {\n      \"id\": 9,\n      \"type\": \"logs\",\n      \"title\"\
+    : \"Logs \\u2014 $namespace / $pod\",\n      \"gridPos\": {\n        \"h\": 14,\n        \"w\": 24,\n\
+    \        \"x\": 0,\n        \"y\": 38\n      },\n      \"datasource\": {\n        \"type\": \"loki\"\
+    ,\n        \"uid\": \"loki-main\"\n      },\n      \"targets\": [\n        {\n          \"expr\":\
+    \ \"{k8s_namespace_name=~\\\"$namespace\\\", k8s_pod_name=~\\\"$pod\\\"}\",\n          \"refId\":\
+    \ \"A\"\n        }\n      ],\n      \"options\": {\n        \"showTime\": true,\n        \"showLabels\"\
+    : true,\n        \"wrapLogMessage\": true,\n        \"prettifyLogMessage\": false,\n        \"enableLogDetails\"\
+    : true,\n        \"dedupStrategy\": \"none\",\n        \"sortOrder\": \"Descending\"\n      }\n  \
+    \  },\n    {\n      \"id\": 10,\n      \"type\": \"row\",\n      \"title\": \"Traces in this window\
+    \ \\u2014 $service\",\n      \"gridPos\": {\n        \"h\": 1,\n        \"w\": 24,\n        \"x\"\
+    : 0,\n        \"y\": 52\n      }\n    },\n    {\n      \"id\": 11,\n      \"type\": \"stat\",\n  \
+    \    \"title\": \"Traces in range \\u2014 $service\",\n      \"gridPos\": {\n        \"h\": 5,\n \
+    \       \"w\": 6,\n        \"x\": 0,\n        \"y\": 53\n      },\n      \"datasource\": {\n     \
+    \   \"type\": \"tempo\",\n        \"uid\": \"tempo-main\"\n      },\n      \"targets\": [\n      \
+    \  {\n          \"query\": \"{resource.service.name=~\\\"$service\\\"} | count() > 0\",\n        \
+    \  \"queryType\": \"traceql\",\n          \"refId\": \"A\"\n        }\n      ],\n      \"fieldConfig\"\
+    : {\n        \"defaults\": {\n          \"unit\": \"short\"\n        },\n        \"overrides\": []\n\
+    \      },\n      \"options\": {\n        \"reduceOptions\": {\n          \"calcs\": [\n          \
+    \  \"lastNotNull\"\n          ]\n        }\n      }\n    },\n    {\n      \"id\": 12,\n      \"type\"\
+    : \"stat\",\n      \"title\": \"p95 duration \\u2014 $service\",\n      \"gridPos\": {\n        \"\
+    h\": 5,\n        \"w\": 6,\n        \"x\": 6,\n        \"y\": 53\n      },\n      \"datasource\":\
+    \ {\n        \"type\": \"tempo\",\n        \"uid\": \"tempo-main\"\n      },\n      \"targets\": [\n\
+    \        {\n          \"query\": \"{resource.service.name=~\\\"$service\\\"} | quantile_over_time(duration,\
+    \ .95) by (resource.service.name)\",\n          \"queryType\": \"traceql\",\n          \"refId\":\
+    \ \"A\"\n        }\n      ],\n      \"fieldConfig\": {\n        \"defaults\": {\n          \"unit\"\
+    : \"s\",\n          \"thresholds\": {\n            \"mode\": \"absolute\",\n            \"steps\"\
+    : [\n              {\n                \"color\": \"green\",\n                \"value\": null\n   \
+    \           },\n              {\n                \"color\": \"yellow\",\n                \"value\"\
+    : 0.3\n              },\n              {\n                \"color\": \"red\",\n                \"\
+    value\": 1\n              }\n            ]\n          }\n        },\n        \"overrides\": []\n \
+    \     },\n      \"options\": {\n        \"reduceOptions\": {\n          \"calcs\": [\n           \
+    \ \"lastNotNull\"\n          ]\n        },\n        \"colorMode\": \"value\"\n      }\n    },\n  \
+    \  {\n      \"id\": 13,\n      \"type\": \"timeseries\",\n      \"title\": \"Trace duration over time\
+    \ \\u2014 $service\",\n      \"gridPos\": {\n        \"h\": 5,\n        \"w\": 12,\n        \"x\"\
+    : 12,\n        \"y\": 53\n      },\n      \"datasource\": {\n        \"type\": \"tempo\",\n      \
+    \  \"uid\": \"tempo-main\"\n      },\n      \"targets\": [\n        {\n          \"query\": \"{resource.service.name=~\\\
+    \"$service\\\"} | select(duration)\",\n          \"queryType\": \"traceql\",\n          \"refId\"\
+    : \"A\"\n        }\n      ],\n      \"fieldConfig\": {\n        \"defaults\": {\n          \"unit\"\
+    : \"s\",\n          \"custom\": {\n            \"drawStyle\": \"points\",\n            \"pointSize\"\
+    : 6\n          }\n        },\n        \"overrides\": []\n      },\n      \"options\": {\n        \"\
+    legend\": {\n          \"displayMode\": \"hidden\"\n        },\n        \"tooltip\": {\n         \
+    \ \"mode\": \"single\"\n        }\n      }\n    },\n    {\n      \"id\": 14,\n      \"type\": \"traces\"\
+    ,\n      \"title\": \"Traces \\u2014 $service\",\n      \"gridPos\": {\n        \"h\": 16,\n     \
+    \   \"w\": 24,\n        \"x\": 0,\n        \"y\": 58\n      },\n      \"datasource\": {\n        \"\
+    type\": \"tempo\",\n        \"uid\": \"tempo-main\"\n      },\n      \"targets\": [\n        {\n \
+    \         \"query\": \"{resource.service.name=~\\\"$service\\\"}\",\n          \"queryType\": \"traceql\"\
+    ,\n          \"limit\": 50,\n          \"refId\": \"A\"\n        }\n      ]\n    }\n  ],\n  \"schemaVersion\"\
+    : 39\n}\n"
+kind: ConfigMap
+metadata:
+  name: lantern-dashboard-investigate
+  namespace: observability
+  labels:
+    grafana_dashboard: '1'
+    lantern.dev/managed: 'true'

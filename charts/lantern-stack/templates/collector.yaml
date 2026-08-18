@@ -126,10 +126,13 @@ spec:
             - k8s.deployment.name
             - k8s.node.name
 
-      # Cardinality control. policy.maxRouteCardinality in the
-      # ObservabilityStack is the intent; this is where it is enforced on the
-      # data path. High-cardinality identifiers in http.route are the single
-      # most common way a well-meaning team melts a Prometheus instance.
+      # Cardinality mitigation, not enforcement of policy.maxRouteCardinality:
+      # this collapse is fixed and unconditional -- it does not read that
+      # value and applies the same regex regardless of what it's set to.
+      # High-cardinality identifiers in http.route are the single most common
+      # way a well-meaning team melts a Prometheus instance; this catches the
+      # common numeric-ID/UUID case but is not a hard cap at N distinct
+      # values (see api/v1alpha1/types.go's MaxRouteCardinality comment).
       transform/route_cardinality:
         error_mode: ignore
         metric_statements:

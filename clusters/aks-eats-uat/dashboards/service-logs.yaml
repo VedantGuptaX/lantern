@@ -1,0 +1,44 @@
+apiVersion: v1
+data:
+  service-logs.json: "{\n  \"title\": \"aks-eats-uat: Service Logs\",\n  \"uid\": \"eats-uat-logs\",\n\
+    \  \"tags\": [\n    \"lantern\",\n    \"logs\"\n  ],\n  \"timezone\": \"browser\",\n  \"refresh\"\
+    : \"30s\",\n  \"time\": {\n    \"from\": \"now-1h\",\n    \"to\": \"now\"\n  },\n  \"templating\"\
+    : {\n    \"list\": [\n      {\n        \"name\": \"namespace\",\n        \"type\": \"query\",\n  \
+    \      \"label\": \"Namespace\",\n        \"datasource\": {\n          \"type\": \"loki\",\n     \
+    \     \"uid\": \"loki-main\"\n        },\n        \"query\": \"label_values({k8s_namespace_name=~\\\
+    \"eats-core|eats-support|cde\\\"}, k8s_namespace_name)\",\n        \"refresh\": 2,\n        \"sort\"\
+    : 1,\n        \"multi\": false,\n        \"includeAll\": true,\n        \"allValue\": \"eats-core|eats-support|cde\"\
+    ,\n        \"current\": {}\n      },\n      {\n        \"name\": \"pod\",\n        \"type\": \"query\"\
+    ,\n        \"label\": \"Pod\",\n        \"datasource\": {\n          \"type\": \"loki\",\n       \
+    \   \"uid\": \"loki-main\"\n        },\n        \"query\": \"label_values({k8s_namespace_name=~\\\"\
+    $namespace\\\"}, k8s_pod_name)\",\n        \"refresh\": 2,\n        \"sort\": 1,\n        \"multi\"\
+    : false,\n        \"includeAll\": false,\n        \"current\": {}\n      }\n    ]\n  },\n  \"panels\"\
+    : [\n    {\n      \"id\": 1,\n      \"type\": \"timeseries\",\n      \"title\": \"Log volume \\u2014\
+    \ $namespace / $pod\",\n      \"description\": \"Line rate for the selected pod. A sudden drop to\
+    \ zero with the pod still Running in the uptime dashboard usually means the app stopped writing to\
+    \ stdout/stderr, not that it's actually quiet.\",\n      \"gridPos\": {\n        \"h\": 6,\n     \
+    \   \"w\": 24,\n        \"x\": 0,\n        \"y\": 0\n      },\n      \"datasource\": {\n        \"\
+    type\": \"loki\",\n        \"uid\": \"loki-main\"\n      },\n      \"targets\": [\n        {\n   \
+    \       \"expr\": \"sum(count_over_time({k8s_pod_name=\\\"$pod\\\"}[1m]))\",\n          \"legendFormat\"\
+    : \"lines/min\",\n          \"refId\": \"A\"\n        }\n      ],\n      \"fieldConfig\": {\n    \
+    \    \"defaults\": {\n          \"custom\": {\n            \"drawStyle\": \"bars\",\n            \"\
+    fillOpacity\": 30\n          },\n          \"thresholds\": {\n            \"mode\": \"absolute\",\n\
+    \            \"steps\": [\n              {\n                \"color\": \"blue\",\n               \
+    \ \"value\": null\n              }\n            ]\n          }\n        },\n        \"overrides\"\
+    : []\n      },\n      \"options\": {\n        \"legend\": {\n          \"displayMode\": \"hidden\"\
+    \n        },\n        \"tooltip\": {\n          \"mode\": \"single\"\n        }\n      }\n    },\n\
+    \    {\n      \"id\": 2,\n      \"type\": \"logs\",\n      \"title\": \"Logs \\u2014 $namespace /\
+    \ $pod\",\n      \"gridPos\": {\n        \"h\": 20,\n        \"w\": 24,\n        \"x\": 0,\n     \
+    \   \"y\": 6\n      },\n      \"datasource\": {\n        \"type\": \"loki\",\n        \"uid\": \"\
+    loki-main\"\n      },\n      \"targets\": [\n        {\n          \"expr\": \"{k8s_pod_name=\\\"$pod\\\
+    \"}\",\n          \"refId\": \"A\"\n        }\n      ],\n      \"options\": {\n        \"showTime\"\
+    : true,\n        \"showLabels\": false,\n        \"wrapLogMessage\": true,\n        \"prettifyLogMessage\"\
+    : false,\n        \"enableLogDetails\": true,\n        \"dedupStrategy\": \"none\",\n        \"sortOrder\"\
+    : \"Descending\"\n      }\n    }\n  ],\n  \"schemaVersion\": 39\n}\n"
+kind: ConfigMap
+metadata:
+  name: lantern-dashboard-service-logs
+  namespace: observability
+  labels:
+    grafana_dashboard: '1'
+    lantern.dev/managed: 'true'

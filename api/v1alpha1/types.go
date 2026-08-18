@@ -278,12 +278,22 @@ type EBPFCfg struct {
 }
 
 // Policy holds guardrails developers cannot exceed. The compiler enforces
-// these; it does not merely warn.
+// these where a real enforcement mechanism exists (see each field's comment
+// for exceptions); it does not merely warn.
 type Policy struct {
 	MaxSeriesPerService int      `json:"maxSeriesPerService,omitempty"`
 	MinSamplingRate     *float64 `json:"minSamplingRate,omitempty"`
 	MaxSamplingRate     *float64 `json:"maxSamplingRate,omitempty"`
 	RequireTeamLabel    *bool    `json:"requireTeamLabel,omitempty"`
+	// MaxRouteCardinality is advisory, not enforced as a hard numeric cap: no
+	// OTel Collector processor can count distinct label values and reject a
+	// scrape once a threshold is crossed the way ServiceMonitor.sampleLimit
+	// does for MaxSeriesPerService. The compiler surfaces this field's value
+	// in a diagnostic explaining the fixed, non-parameterized ID/UUID
+	// collapse the chart's collector actually applies (see
+	// charts/lantern-stack/templates/collector.yaml, transform/route_cardinality)
+	// so a developer setting this to 50 doesn't believe they're getting a
+	// stronger guarantee than setting it to 5000 would give them.
 	MaxRouteCardinality int      `json:"maxRouteCardinality,omitempty"`
 	DenyLabels          []string `json:"denyLabels,omitempty"`
 }
