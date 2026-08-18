@@ -4,10 +4,9 @@ This file is for you if you're Cursor, Claude Code, or any other AI coding
 agent, and a human has just asked you to help them set up Lantern in their
 own repo or against their own cluster. It's not a walkthrough — that's
 [GETTING_STARTED.md](GETTING_STARTED.md) — it's the judgment calls and sharp
-edges that a walkthrough can't encode, written by an agent that ran this
-project's full flow (`discover` → `synth` → install → canary → dashboards →
-logs → traces) against a real, populated, capacity-constrained cluster and
-hit real problems doing it.
+edges that a walkthrough can't encode, covering the full flow (`discover` →
+`synth` → install → canary → dashboards → logs → traces) against a real,
+populated, capacity-constrained cluster.
 
 Read this whole file before running anything. It's short on purpose.
 
@@ -99,10 +98,7 @@ freely as you need to iterate. The line you don't cross without the human's
 explicit go-ahead is anything that touches the live cluster: `helm install`/
 `upgrade`, `kubectl apply`, deleting or restarting anything.
 
-## Sharp edges — read these before you rediscover them the hard way
-
-Every one of these cost real debugging time finding out the hard way against
-a real cluster. Save yourself the loop:
+## Sharp edges — operational notes worth knowing up front
 
 - **Every subchart this project depends on ships with zero default CPU/
   memory requests** (kube-prometheus-stack, Loki, Tempo, the OTel Operator —
@@ -113,11 +109,10 @@ a real cluster. Save yourself the loop:
   and confirm with `kubectl top` after install, especially on a cluster that
   isn't obviously oversized for this.
 - **`target.metricsPort` unset means the generated `ServiceMonitor` might
-  scrape nothing, silently.** `-strict` now warns about this (a real bug
-  found and fixed against a live cluster), but a warning still requires a
-  human to actually fix it — verify the named port exists on the real
-  `Service` (`kubectl get svc -o yaml`), don't assume `discover`'s guess is
-  right just because it didn't error.
+  scrape nothing, silently.** `-strict` warns about this, but a warning
+  still requires a human to actually fix it — verify the named port exists
+  on the real `Service` (`kubectl get svc -o yaml`), don't assume
+  `discover`'s guess is right just because it didn't error.
 - **`team: unassigned` (the `-team` flag's fallback) satisfies
   `requireTeamLabel: true` mechanically, not in spirit.** The policy only
   checks the field is non-empty — it can't tell a real owner from a
@@ -128,18 +123,23 @@ a real cluster. Save yourself the loop:
   ebpf` and the human expects to see its traces, nothing produces them until
   you (or they) separately install an eBPF instrumentation agent (OBI/Beyla)
   — see [docs/getting-signals-into-grafana.md](docs/getting-signals-into-grafana.md)
-  for a verified-working config and the four real gotchas in it (undersized
-  memory silently drops traces per-process with no loud error; the
-  `/sys/fs/bpf` hostPath mount is required for HTTP/gRPC tracing
-  specifically, not optional; the narrowed-capability path may not fully
-  work even after adding every capability the values.yaml comments suggest;
+  for a verified-working config and the gotchas in it (undersized memory
+  silently drops traces per-process with no loud error; the `/sys/fs/bpf`
+  hostPath mount is required for HTTP/gRPC tracing specifically, not
+  optional; the narrowed-capability path may not fully work even after
+  adding every capability the values.yaml comments suggest;
   `contextPropagation.enabled` pulls in `hostNetwork` as a real, separate
   privilege increase worth knowing about before you accept it by default).
 - **CLI flags can go before, after, or between positional arguments** —
   `lantern discover -team unassigned -` and `lantern discover - -team
-  unassigned` behave identically. If you see a `stat <flagname>: no such
-  file or directory` error from an older checkout, that's this bug,
-  long since fixed; not a sign you're holding the tool wrong today.
+  unassigned` behave identically, so don't worry about argument order when
+  constructing a command.
+- **`policy.maxRouteCardinality` is advisory, not a hard cap.** The
+  collector collapses numeric IDs and UUIDs in `http.route` unconditionally;
+  it doesn't count distinct values against the configured number. Don't tell
+  a human this field guarantees a specific cardinality ceiling —
+  `policy.maxSeriesPerService` (compiled to the `ServiceMonitor`'s native
+  `sampleLimit`) is the field that actually enforces a hard number.
 
 ## When to stop and ask the human
 

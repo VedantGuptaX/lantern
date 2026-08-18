@@ -46,12 +46,9 @@ changes on their own schedules, independently of each other.
 **Then GPUs show up, and it gets worse.** HTTP services at least have a
 shared answer: OpenTelemetry's semantic conventions give everyone
 `http.server.request.duration`, so a compiler can build an alert without you
-naming a metric. There is no such agreement for GPUs or LLM inference. If
-you've ever tried to monitor a GPU fleet — say, GPU health via the DCGM
-operator, alongside an inference server's own serving-quality metrics (time
-to first token, inter-token latency, request queue depth) — you've hit this
-first-hand: every exporter names the same kind of signal differently, and
-nothing standardizes it the way OTel did for HTTP:
+naming a metric. There is no such agreement for GPUs or LLM inference. Every
+exporter names the same kind of signal differently, and nothing standardizes
+it the way OTel did for HTTP:
 
 | Signal | vLLM | Triton | dcgm-exporter |
 |---|---|---|---|
@@ -160,6 +157,57 @@ the full picture, including saturation SLOs that combine both (e.g. "page me
 if GPU memory utilization stays above 90% for the request queue depth this
 service is actually seeing").
 
+## Usage
+
+Everything below reads and writes files. Nothing here touches a cluster —
+Lantern only ever generates YAML; `kubectl` or `helm` is what applies it.
+
+```
+lantern init     [flags]                  ask what you want, write a Helm values overlay
+lantern discover [flags] <path|->...      draft specs from existing workloads
+lantern synth    [flags] <spec.yaml>...   compile specs to Kubernetes manifests
+lantern validate [flags] <spec.yaml>...   parse and check specs, emit no output
+lantern version
+```
+
+| Flag | Applies to | Meaning |
+|---|---|---|
+| `-stack <file>` | `synth`, `validate` | the `ObservabilityStack` to compile against |
+| `-o <dir>` | `synth` | write one file per object instead of a stream on stdout |
+| `-o <file>` | `init` | where to write the generated values overlay (default `./values-init.yaml`) |
+| `-quiet` | all | suppress diagnostics on stderr |
+| `-strict` | `synth`, `validate` | treat warnings as errors |
+| `-team <name>` | `discover` | ownership fallback when no team label can be found |
+| `-ns <a,b>` | `discover` | restrict discovery to these namespaces |
+| `-all` | `discover` | include platform namespaces (`kube-system` and friends) |
+
+Flags can appear before, after, or interspersed with positional arguments —
+`lantern discover -team platform ./manifests` and
+`lantern discover ./manifests -team platform` are equivalent.
+
+**A typical first run:**
+
+```bash
+# 1. Draft specs from what's already running in the cluster.
+kubectl get deploy,statefulset,cronjob -A -o yaml | lantern discover - > services.yaml
+
+# 2. Read services.yaml, fill in every field discover marked REVIEW.
+
+# 3. Check the specs parse and satisfy your stack's policy, with no output.
+lantern validate -stack stack.yaml -strict services.yaml
+
+# 4. Compile to Kubernetes manifests and inspect before applying anything.
+lantern synth -stack stack.yaml -strict services.yaml > manifests.yaml
+kubectl diff -f manifests.yaml
+
+# 5. Apply once the diff looks right.
+kubectl apply -f manifests.yaml
+```
+
+`lantern init` is a separate, interactive entry point for choosing which
+signals (metrics, logs, traces, GPU monitoring) the optional quickstart Helm
+chart should install — see [below](#only-want-some-of-this-lantern-init-asks-first).
+
 ## Already running services? Don't write specs by hand
 
 `lantern discover` reads your existing workloads and drafts a spec for each
@@ -228,9 +276,10 @@ the build if anything impure sneaks in.
 
 **Guardrails live in the compiler, not in a wiki page.** A well-meaning
 team shipping a `user_id` label shouldn't be able to melt your Prometheus.
-_Why:_ high-cardinality labels are dropped at scrape time and in the
-collector automatically, enforced by the compiler rather than documented as
-a rule someone has to remember.
+_Why:_ high-cardinality labels you deny-list are dropped at scrape time and
+in the collector automatically, and a per-service sample cap is available,
+enforced by the compiler rather than documented as a rule someone has to
+remember.
 
 **Escape hatches are mandatory, not a nice-to-have.** Generated output is
 opinionated, and somebody will always disagree with a specific default.
@@ -246,7 +295,7 @@ estimated from chart defaults. Every subchart this project depends on
 (kube-prometheus-stack, Loki, Tempo, the OTel Operator) ships with **zero**
 default resource requests — "size it yourself" is the norm across this whole
 ecosystem, not a Lantern-specific gap. The numbers below are what this
-project's own values files now set explicitly, so `make install-quickstart`
+project's own values files set explicitly, so `make install-quickstart`
 doesn't hand you an unbounded footprint.
 
 | Component | CPU request | Mem request | Notes |
@@ -268,28 +317,25 @@ together, dashboards included.
 
 | Mode | Free cluster capacity needed |
 |---|---|
-| **Bring your own backend** | ~0.3 vCPU / 0.5Gi RAM — just the OTel Operator and collector. Whatever your existing Prometheus/Grafana already needs is separate. Not yet measured as precisely as the quickstart path above. |
+| **Bring your own backend** | ~0.3 vCPU / 0.5Gi RAM — just the OTel Operator and collector. Whatever your existing Prometheus/Grafana already needs is separate. |
 | **Quickstart, metrics + dashboards only** (no logs, no traces) | ~435m vCPU / ~1.2Gi RAM combined, from the table above minus the logs/traces/OBI rows. |
-| **Quickstart, full stack** (metrics + logs + traces) | ~595m vCPU / ~2.3Gi RAM combined, measured as above. This is tighter than the old "~1.5 vCPU / 2.5Gi" estimate suggested — that number was never wrong, it was just for a much smaller slice of what the quickstart now includes. |
+| **Quickstart, full stack** (metrics + logs + traces) | ~595m vCPU / ~2.3Gi RAM combined, measured as above. |
 | **Storage** | ~10–20Gi of PVC if you enable persistent storage for Loki/Tempo. The quickstart defaults to ephemeral filesystem storage — no PVC, but log/trace data is lost on pod restart. Fine for evaluation, not for anything you'd want to keep. |
 | **GPU / DCGM monitoring (Lantern's own footprint)** | ~0 additional — `gpuMonitoring.enabled` only adds a `ServiceMonitor` and a `PrometheusRule` (two Kubernetes objects, not a workload). |
 
 `./scripts/preflight-check.sh` computes your cluster's actual free capacity
-against these numbers before you install anything. On a genuinely tight
-cluster (this one had well under 200m CPU free across both nodes combined
-by the time the full stack went in), expect to actually hit that math, not
-just clear it comfortably — plan accordingly rather than assuming "quickstart"
-means "always fits."
+against these numbers before you install anything, so you know where you
+stand on a genuinely tight cluster rather than assuming "quickstart" always
+fits comfortably.
 
 ### Only want some of this? `lantern init` asks first
 
 The quickstart's toggles (`kube-prometheus-stack.enabled`, `loki.enabled`,
 `tempo.enabled`, `collector.enabled`, `opentelemetry-operator.enabled`,
 `logsCollector.enabled`) already let you install any subset — metrics only,
-metrics + logs, everything, whatever fits. The friction was never the
-capability, it was knowing these six flags exist and how they interact.
-`lantern init` is a short interactive prompt that asks what you actually
-want and writes the matching values overlay for you:
+metrics + logs, everything, whatever fits. `lantern init` is a short
+interactive prompt that asks what you actually want and writes the matching
+values overlay for you:
 
 ```console
 $ lantern init
@@ -298,8 +344,7 @@ Logs (Loki)? [Y/n] n
 Traces? [Y/n] n
 GPU node monitoring (DCGM)? Skip if you have no GPU nodes. [y/N] n
 
-Estimated footprint (single-scheduled + per-node, from this session's
-own measurements against a real cluster -- see the table above):
+Estimated footprint (single-scheduled + per-node, from the table above):
   kube-prometheus-stack (Prometheus, Alertmanager, Grafana, kube-state-metrics)  245m    592Mi
   node-exporter                                                                  10m     24Mi  (per node)
 
@@ -315,11 +360,9 @@ Wrote values-init.yaml. Next:
 Answering "no" to everything but metrics turns off Loki, Tempo, the OTel
 Collector, and the OTel Operator entirely — no CRDs, no webhook, no
 collector Deployment. Just Prometheus, Alertmanager, Grafana, and
-node-exporter. Verified by actually rendering that combination and
-confirming zero Tempo/Loki/OTel objects come out — including Grafana's own
-datasource list, which `values-quickstart.yaml` alone wires to Tempo/Loki
-unconditionally; `init`'s overlay corrects that to match what you actually
-turned on.
+node-exporter. `init`'s overlay also matches Grafana's datasource list to
+what you actually turned on, so answering "no" to logs/traces means Grafana
+isn't pointed at Loki/Tempo either.
 
 ### GPU node prerequisites (NVIDIA GPU Operator / DCGM — not installed by Lantern)
 
@@ -327,14 +370,13 @@ turned on.
 `dcgm-exporter`) is already running on your GPU nodes — that's separate
 infrastructure this project doesn't install or manage, so budget for it
 before turning the toggle on. Real numbers where NVIDIA publishes them,
-honest gaps where they don't — this project's own rule ("never guess at a
-number it can't verify") applies here too, not just to PromQL:
+honest gaps where they don't:
 
 | Component | CPU request | Mem request | Source |
 |---|---|---|---|
 | `dcgm-exporter` alone | 10–100m | 128Mi–512Mi (limit up to 1Gi) | [NVIDIA GPU Operator `ClusterPolicy` docs](https://docs.nvidia.com/datacenter/cloud-native/gpu-telemetry/latest/dcgm-exporter.html) — varies with how many DCGM fields you collect; the default field list is the main lever if you need to trim it |
-| `nvidia-driver-daemonset` | ~100m | ~128Mi (limit ~1 CPU / 2Gi) | [NVIDIA GPU Operator docs](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html) — this is the installer process, not the driver itself (the driver is just files on the host once installed); expect a real, temporary CPU spike during the initial driver load on each node, not just this steady-state number |
-| Device plugin, container toolkit, GPU/node-feature-discovery, the operator itself (5 more components) | **Not officially documented** | **Not officially documented** | NVIDIA doesn't publish per-component sizing for the rest of the 8-component stack. Don't trust a number here from anywhere that isn't NVIDIA's own docs or your own `kubectl top` after a real install — this table won't invent one either. |
+| `nvidia-driver-daemonset` | ~100m | ~128Mi (limit ~1 CPU / 2Gi) | [NVIDIA GPU Operator docs](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html) — this is the installer process, not the driver itself; expect a real, temporary CPU spike during the initial driver load on each node, not just this steady-state number |
+| Device plugin, container toolkit, GPU/node-feature-discovery, the operator itself (5 more components) | **Not officially documented** | **Not officially documented** | NVIDIA doesn't publish per-component sizing for the rest of the 8-component stack. Measure with your own `kubectl top` after a real install. |
 
 Practical takeaway: `dcgm-exporter` itself is cheap and predictable enough to
 plan around. The other 7 components of the GPU Operator stack are not —
@@ -409,56 +451,49 @@ zero relationship to the compiler or `charts/lantern-stack`. See
 If you're using Cursor, Claude Code, or another AI coding agent to help set
 Lantern up — either for yourself, or you *are* that agent reading this on
 someone else's behalf — start with **[agent_handoff.md](agent_handoff.md)**
-instead of jumping straight to `helm install`. It's short, and it's the
-difference between an agent that follows this project's safety discipline
-(preflight before install, diff before apply, one service at a time for
-instrumentation injection) and one that finds out why those rules exist by
-breaking something first.
-
-It exists because this project's own setup was verified end-to-end by an AI
-agent against a real, populated cluster, and every real problem hit along
-the way — a chart bug, a capacity miscalculation, an unreviewed guess
-applied too broadly — came from skipping a step this project already tells
-you not to skip. `agent_handoff.md` is that experience written down so the
-next agent doesn't have to rediscover it.
+instead of jumping straight to `helm install`. It's short, and it lays out
+this project's safety discipline for cluster changes: preflight before
+install, diff before apply, one service at a time for instrumentation
+injection.
 
 ## Project status
 
-Alpha, but **verified end-to-end on a real, populated AKS cluster** — not
-just synthetic `kind` fixtures. Metrics, logs, traces, and generated
-dashboards all confirmed working with real data, from a real multi-service
-deployment, real capacity constraints included. This table is deliberately
-narrow — it only lists what's actually built and tested in the code today.
-Everything still ahead (per-team dashboard folders, the operator, SDKs, and
-why they're prioritized that way) is tracked separately, so this README
+Alpha. The compiler, CLI, and quickstart Helm chart are all built and
+exercised end to end — generating manifests, installing the optional stack,
+and instrumenting real services. This table lists what's actually built and
+tested in the code today; the roadmap (per-team dashboard folders, the
+Kubernetes operator, SDK-level helpers) is tracked separately so this README
 doesn't drift into a wishlist.
 
-| | Status |
+| Feature | Status |
 |---|---|
-| Compiler core and CLI | ✅ Done |
-| OpenTelemetry agent injection | ✅ Done |
-| eBPF / agent auto-selection | ✅ Done — selects the mode; does **not** install the eBPF probe itself. Bring-your-own path (OBI) verified end-to-end on a real cluster, real gotchas documented — see [docs](docs/getting-signals-into-grafana.md) |
-| Prometheus scrape config | ✅ Done — real bug found and fixed installing on a live cluster: a `ServiceMonitor` could reference a named port that doesn't exist on the target `Service` with no warning; now caught at `-strict` time |
-| SLO burn-rate alerts | ✅ Done — real bug found and fixed on a live cluster: numeric SLO constants (objective, error budget) could serialize as bare YAML numbers instead of quoted strings, which the live `PrometheusRule` CRD schema rejects outright; now emits correctly and verified loading with `health: ok` against a real Prometheus |
-| Workload discovery (`lantern discover`) | ✅ Done — real bug found and fixed against real `kubectl get -A -o yaml` output: the YAML parser rejected valid line-folded scalars that only show up in aged, real-cluster workloads, never in fixtures |
-| Guided install (`lantern init`) | ✅ Done — interactive prompt for which signals you want (metrics/logs/traces/SDK instrumentation/GPU), writes a matching Helm values overlay. Verified by rendering a metrics-only combination and confirming zero Tempo/Loki/OTel objects come out; found and fixed one real gap doing that — `values-quickstart.yaml` wires Tempo/Loki into Grafana's datasources unconditionally, which `init`'s overlay now corrects to match what's actually enabled |
-| GPU node health (DCGM) | ✅ Done — cluster-level, via the `gpuMonitoring` chart toggle |
-| GPU inference-server SLOs (ttft, inter-token latency, queue depth) | ✅ Done — `serviceKind: inference`, see [docs](docs/gpu-and-inference-observability.md) |
-| Preflight safety gate | ✅ Done — `make preflight`, gates `make install-*`, plus an in-cluster hook. Two real bugs found and fixed, both on the same underlying ambiguity: the CRD-ownership check couldn't tell "this release's own brand-new/own-CRD" from "a foreign one" on a fresh install (fixed by counting actual custom-resource instances instead of trusting the CRD-level Helm annotation, which `crds/`-folder CRDs never get regardless of owner) — and then, found on a real second `helm upgrade`, the *same* ambiguity one level down: a nonzero instance count alone still isn't proof of a foreign install, since this release's own already-existing ServiceMonitors/PrometheusRules/Alertmanager/Prometheus CR instances don't carry that CRD-level annotation either. Now checks per-instance ownership (Helm annotation or `lantern.dev/managed=true`) before blocking |
-| System metrics | ✅ Via kube-prometheus-stack, not generated by Lantern |
-| Traces | ✅ Verified end-to-end on a real cluster — Tempo + OBI (bring-your-own eBPF probe) → collector → Tempo → Grafana, confirmed with real trace data from a real service. See [docs](docs/getting-signals-into-grafana.md) for the exact gotchas (memory sizing, the `bpffs` hostPath mount, `privileged` vs. narrowed capabilities). Tempo now defaults to persistent storage (`persistence.enabled: true`, matching Loki) — trace data survives a pod restart instead of living only on ephemeral storage |
-| Kubernetes Events (queryable history beyond etcd's ~1h TTL) | ✅ Verified end-to-end on a real cluster — not generated by Lantern's chart, same bring-your-own pattern as OBI: a standalone `kubernetes-events-exporter` release watches the Events API continuously and pushes to Loki with a hand-scoped `ClusterRole` (the upstream chart's own default RBAC is a cluster-wide wildcard read on every resource including Secrets — scoped down instead). See [docs](docs/getting-signals-into-grafana.md) |
-| Log collection (pod logs → Loki) | ✅ Done, verified end-to-end on a real cluster — `logsCollector.enabled`, a DaemonSet collector; off by default, on in the quickstart. Two real bugs found and fixed: undersized memory limit silently dropped log batches for any service verbose enough to log full SQL query text, and `start_at: beginning` meant every restart of the collector replayed the entire node's log history (including every system pod), overwhelming Loki's own ingestion limits and starving out real, current traffic behind the backlog. See [docs](docs/getting-signals-into-grafana.md) |
-| Per-service Grafana dashboards | ✅ Done, verified rendering real data on a real cluster — generated from the same recording rules that drive alerts; no per-team folders yet, see [docs](docs/getting-signals-into-grafana.md) |
-| Quickstart Helm chart | ✅ `helm install`/`helm upgrade` now run and verified repeatedly against a real AKS cluster, not just `helm template`/`helm lint`. Several real install-time bugs found and fixed along the way: Loki's chart needing an explicit `deploymentMode`, an assumed cert-manager dependency that doesn't hold on a cluster without it, a CRD/cert install-ordering deadlock between the OTel Operator's self-signed cert and Helm's own apply ordering, and a Tempo receiver/datasource-port mismatch. `verify-kind.sh` (the local `kind`-based rehearsal) still hasn't been run in any environment that had `kind`/Docker available — real-cluster verification happened instead, which is a stronger check but not a substitute if you specifically want the throwaway-cluster rehearsal documented in [CONTRIBUTING.md](CONTRIBUTING.md) |
+| Compiler core and CLI (`discover`, `synth`, `validate`) | ✅ |
+| OpenTelemetry agent injection | ✅ |
+| eBPF / agent auto-selection | ✅ — selects the instrumentation mode per runtime; you bring your own eBPF probe (OBI), see [docs](docs/getting-signals-into-grafana.md) |
+| Prometheus scrape config (`ServiceMonitor`) | ✅ — includes policy-driven label dropping and an optional per-service sample cap |
+| SLO burn-rate alerts (`PrometheusRule`) | ✅ — multiwindow multi-burn-rate PromQL generated automatically, no hand-written queries |
+| Workload discovery (`lantern discover`) | ✅ — drafts specs from live cluster state, flags every guess for review |
+| Guided install (`lantern init`) | ✅ — interactive prompt for which signals you want (metrics/logs/traces/GPU), writes a matching Helm values overlay |
+| GPU node health (DCGM) | ✅ — cluster-level, via the `gpuMonitoring` chart toggle |
+| GPU inference-server SLOs (ttft, inter-token latency, queue depth) | ✅ — `serviceKind: inference`, see [docs](docs/gpu-and-inference-observability.md) |
+| Preflight safety gate | ✅ — `make preflight`, gates `make install-*`, plus an in-cluster hook |
+| System metrics | ✅ — via kube-prometheus-stack, not generated by Lantern |
+| Traces | ✅ — Tempo + bring-your-own eBPF probe (OBI); see [docs](docs/getting-signals-into-grafana.md) |
+| Kubernetes Events (queryable history beyond etcd's short TTL) | ✅ — bring-your-own `kubernetes-events-exporter` → Loki, same pattern as OBI; see [docs](docs/getting-signals-into-grafana.md) |
+| Log collection (pod logs → Loki) | ✅ — `logsCollector.enabled`, a DaemonSet collector; off by default, on in the quickstart |
+| Per-service Grafana dashboards | ✅ — generated from the same recording rules that drive alerts; no per-team folders yet |
+| Quickstart Helm chart | ✅ — `helm install`/`helm upgrade` against a real cluster |
+
+**Not yet built:** per-team Grafana dashboard folders and RBAC, a Kubernetes
+operator (reconciling `ServiceObservability`/`ObservabilityStack` directly
+instead of via the CLI), log↔trace correlation.
 
 ## Contributing
 
 Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). The
 highest-value place to help right now is per-team dashboard folders
-(grafana-operator's `GrafanaDashboard`/`GrafanaFolder` CRDs) and actually
-running `helm install` for the first time — open an issue if you want to
-pick either up and we'll sort out the current state together.
+(grafana-operator's `GrafanaDashboard`/`GrafanaFolder` CRDs) — open an issue
+if you want to pick that up and we'll sort out the current state together.
 
 ```bash
 make all      # fmt, vet, test, build
@@ -468,19 +503,11 @@ make golden   # re-baseline golden files after an intended change
 ./scripts/verify-kind.sh   # full end-to-end on a throwaway kind cluster
 ```
 
-`verify-kind.sh` exercises the same ground the project now has real-cluster
-evidence for — chart dependency resolution, `helm lint`, a real install,
-discovery against a live cluster, and applying generated manifests — but on
-a disposable local `kind` cluster instead of a shared one. It writes
-`verify-report.txt`. It still hasn't been run in any environment that had
-`kind`/Docker available; real-cluster verification against a live AKS
-cluster happened instead (see [Project status](#project-status) — every row
-marked verified-on-a-real-cluster came from that, not from `kind`). That's
-a stronger check in the ways that matter (real traffic, real capacity
-pressure, real multi-namespace RBAC) but not a substitute for the fast,
-disposable, no-blast-radius loop `verify-kind.sh` is meant to give
-contributors. If you have `kind`/Docker locally and run it, the report is
-still one of the most useful things you could open an issue with.
+`verify-kind.sh` exercises chart dependency resolution, `helm lint`, a real
+install, discovery against a live cluster, and applying generated manifests
+— all on a disposable local `kind` cluster instead of a shared one. It writes
+`verify-report.txt`, which is one of the most useful things you could open an
+issue with if you hit something unexpected.
 
 ## License
 
