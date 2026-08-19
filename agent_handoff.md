@@ -161,7 +161,8 @@ explicit go-ahead is anything that touches the live cluster: `helm install`/
 | See the full setup walkthrough on an empty/demo cluster | [GETTING_STARTED.md](GETTING_STARTED.md) |
 | Set this up on a cluster with real, running services | [docs/adopting-an-existing-cluster.md](docs/adopting-an-existing-cluster.md) |
 | Understand *why* the compiler is designed the way it is | [DESIGN.md](DESIGN.md) |
-| Add GPU node health or inference-server SLOs | [docs/gpu-and-inference-observability.md](docs/gpu-and-inference-observability.md) |
+| Set up GPU monitoring (node health + inference SLOs), step by step | [docs/gpu_monitoring_guide.md](docs/gpu_monitoring_guide.md) |
+| GPU/inference SLI reference (query shapes, metric cheat sheet, per-pod attribution) | [docs/gpu-and-inference-observability.md](docs/gpu-and-inference-observability.md) |
 | Get logs, traces, or generated dashboards actually showing data | [docs/getting-signals-into-grafana.md](docs/getting-signals-into-grafana.md) |
 | Contribute code back, understand the compiler purity boundary | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | See what's built vs. still ahead | [README.md § Project status](README.md#project-status) |

@@ -1,0 +1,19 @@
+apiVersion: lantern.dev/v1alpha1
+kind: ServiceObservability
+metadata:
+  name: llama-70b-server
+  namespace: ml
+spec:
+  target:
+    kind: Deployment
+    name: llama-70b-server
+    metricsPort: metrics
+  serviceKind: inference
+  inferenceServer: vllm
+  team: ml-platform
+  signals:
+    metrics: true
+    traces:
+      enabled: false
+  instrumentation:
+    mode: none

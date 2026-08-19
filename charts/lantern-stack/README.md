@@ -113,8 +113,12 @@ This is cluster-level infrastructure monitoring, not per-service SLOs — same
 split as node-exporter vs. an OpenTelemetry HTTP latency SLO. For a specific
 `ServiceObservability` to build its own SLO against GPU saturation (or against
 an inference server's queue depth, time-to-first-token, or inter-token
-latency), use `serviceKind: inference` and `type: saturation` /
-`type: latency` with an explicit `metric:` in the compiler — see
+latency), use `serviceKind: inference`. Set `inferenceServer: vllm|triton|nim|
+tgi` and the compiler generates the standard SLOs (ttft / inter-token / queue-
+depth) against that server's known metric names automatically — no `metric:`
+to hand-write (`lantern discover` even sets `inferenceServer` for you from the
+image); or declare your own `type: saturation` / `type: latency` SLOs with an
+explicit `metric:` to override. See
 [docs/gpu-and-inference-observability.md](../../docs/gpu-and-inference-observability.md).
 Per-pod GPU attribution on a bring-your-own install additionally requires
 dcgm-exporter's own `DCGM_EXPORTER_KUBERNETES=true` setting (configured on

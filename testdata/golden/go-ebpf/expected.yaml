@@ -19,6 +19,10 @@ spec:
     - port: metrics
       interval: 30s
       path: /metrics
+      relabelings:
+        - action: replace
+          targetLabel: job
+          replacement: shop/pricing-svc
       metricRelabelings:
         - action: labeldrop
           regex: email|request_id|session_id|user_id

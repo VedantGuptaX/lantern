@@ -3,6 +3,8 @@ package prom
 import (
 	"strings"
 	"testing"
+
+	api "github.com/VedantGuptaX/lantern/api/v1alpha1"
 )
 
 // TestServiceMonitorWarnsOnUnverifiedPortGuess is the regression test for a
@@ -114,5 +116,32 @@ func TestServiceMonitorNoSeriesLimitWhenUnset(t *testing.T) {
 	got := obj.YAML()
 	if strings.Contains(got, "sampleLimit") {
 		t.Errorf("did not expect sampleLimit in output when SeriesLimit is unset, got:\n%s", got)
+	}
+}
+
+// The ServiceMonitor must pin the job label to "<namespace>/<service>" so it
+// agrees with the SLI selector SeriesSelector builds for mode: none. If these
+// two ever drift, the recording rules and burn-rate alerts select nothing and
+// silently read as always-healthy -- so this test asserts they line up.
+func TestServiceMonitorPinsJobToMatchSeriesSelector(t *testing.T) {
+	obj, _, err := BuildServiceMonitor(MonitorInput{
+		Service:   "llama-70b-server",
+		Namespace: "ml",
+		Selector:  map[string]string{"app": "llama-70b-server"},
+		Port:      "metrics",
+	})
+	if err != nil {
+		t.Fatalf("BuildServiceMonitor: %v", err)
+	}
+	got := obj.YAML()
+	for _, want := range []string{"relabelings:", "action: replace", "targetLabel: job", "replacement: ml/llama-70b-server"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("ServiceMonitor missing %q, got:\n%s", want, got)
+		}
+	}
+	// The pinned job must be exactly the value the SLI selector matches on.
+	sel, _ := SeriesSelector("llama-70b-server", "ml", "", api.ModeNone)
+	if !strings.Contains(sel, `job="ml/llama-70b-server"`) {
+		t.Errorf("SeriesSelector job does not match the pinned job label: %q", sel)
 	}
 }

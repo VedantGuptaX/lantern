@@ -251,7 +251,9 @@ func TestSaturationBuildsThresholdBreachRatio(t *testing.T) {
 	if !sli.Experimental {
 		t.Error("saturation SLIs are always built on a caller-supplied metric; Experimental must be true")
 	}
-	wantError := `count_over_time((vllm:num_requests_waiting{service_name="llama-70b"} > bool 10)[{{.window}}:])`
+	// bad must SUM the 0/1 breach indicator, not COUNT samples -- count_over_time
+	// here would tally every sample and pin the ratio at 1 (always "100% bad").
+	wantError := `sum_over_time((vllm:num_requests_waiting{service_name="llama-70b"} > bool 10)[{{.window}}:])`
 	if sli.Error != wantError {
 		t.Errorf("Error = %q, want %q", sli.Error, wantError)
 	}

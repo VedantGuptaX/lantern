@@ -41,8 +41,20 @@ type ObjectMeta struct {
 }
 
 type ServiceObservabilitySpec struct {
-	Target          Target             `json:"target"`
-	ServiceKind     ServiceKind        `json:"serviceKind"`
+	Target      Target      `json:"target"`
+	ServiceKind ServiceKind `json:"serviceKind"`
+	// InferenceServer names the GPU model-serving stack behind a
+	// serviceKind: inference workload (vLLM, Triton, NIM, TGI). It is only
+	// meaningful for serviceKind: inference and unlocks a built-in preset:
+	// when set and no SLOs are declared, the compiler generates the standard
+	// SLOs for that server (TTFT, inter-token latency, queue depth) against
+	// its known metric names, so the user gets burn-rate alerts and a
+	// populated dashboard without hand-writing metric names. The metric names
+	// are curated (see pkg/compile/inference.go); the SLO thresholds are
+	// defaults flagged for review, since Lantern cannot verify a histogram's
+	// bucket boundaries. `lantern discover` sets this automatically from the
+	// container image.
+	InferenceServer InferenceServer    `json:"inferenceServer,omitempty"`
 	Team            string             `json:"team"`
 	Signals         Signals            `json:"signals,omitempty"`
 	SLOs            []SLO              `json:"slos,omitempty"`
@@ -80,6 +92,19 @@ const (
 	// inter-token latency, ...) or type: saturation for a gauge (queue depth,
 	// GPU utilization, ...). See SLO.Metric and SLOSaturation.
 	KindInference ServiceKind = "inference"
+)
+
+// InferenceServer identifies a GPU model-serving stack, used only with
+// serviceKind: inference. It selects a built-in SLO/metric preset (see
+// pkg/compile/inference.go) so the common inference SLOs can be generated
+// without the user naming each server's metrics by hand.
+type InferenceServer string
+
+const (
+	InferenceVLLM   InferenceServer = "vllm"
+	InferenceTriton InferenceServer = "triton"
+	InferenceNIM    InferenceServer = "nim"
+	InferenceTGI    InferenceServer = "tgi"
 )
 
 type Signals struct {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -37,6 +38,38 @@ func TestPromptYesNoAcceptsEmptyAsDefault(t *testing.T) {
 	}
 }
 
+func TestPromptMultiChoice(t *testing.T) {
+	opts := []string{"vllm", "triton", "nim", "tgi"}
+	cases := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{"empty skips", "\n", nil},
+		{"single index", "1\n", []string{"vllm"}},
+		{"comma indices", "1,4\n", []string{"vllm", "tgi"}},
+		{"space indices", "2 3\n", []string{"triton", "nim"}},
+		{"by name", "vllm,tgi\n", []string{"vllm", "tgi"}},
+		{"name case-insensitive", "VLLM Triton\n", []string{"vllm", "triton"}},
+		{"result is in menu order regardless of input order", "4,1\n", []string{"vllm", "tgi"}},
+		{"duplicates collapse", "1,1,vllm\n", []string{"vllm"}},
+		{"bad token then valid", "5\n2\n", []string{"triton"}},
+		{"bad name then valid", "sglang\ntgi\n", []string{"tgi"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := bufio.NewReader(strings.NewReader(c.input))
+			got, err := promptMultiChoice(r, &strings.Builder{}, "pick?", opts)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !reflect.DeepEqual(got, c.want) {
+				t.Errorf("got %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
 func TestRunInitPromptsResolvesEachAnswer(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -64,8 +97,9 @@ func TestRunInitPromptsResolvesEachAnswer(t *testing.T) {
 			want:  initAnswers{Metrics: true, Logs: true, Traces: false, SDKAgent: false, GPU: false},
 		},
 		{
+			// Trailing "\n" is the inference-server multi-select, skipped here.
 			name:  "gpu on, dcgm already running (default path -- bring your own)",
-			input: "y\ny\ny\nn\ny\ny\n",
+			input: "y\ny\ny\nn\ny\ny\n\n",
 			want:  initAnswers{Metrics: true, Logs: true, Traces: true, SDKAgent: false, GPU: true, DCGMExists: true},
 		},
 		{
@@ -73,7 +107,7 @@ func TestRunInitPromptsResolvesEachAnswer(t *testing.T) {
 			// working driver/device plugin -- this is the one combination
 			// that should end up with installExporter() true.
 			name:  "gpu on, no dcgm yet, gpu nodes already GPU-ready",
-			input: "y\ny\ny\nn\ny\nn\ny\n",
+			input: "y\ny\ny\nn\ny\nn\ny\n\n",
 			want:  initAnswers{Metrics: true, Logs: true, Traces: true, SDKAgent: false, GPU: true, DCGMExists: false, GPUReady: true},
 		},
 		{
@@ -81,8 +115,16 @@ func TestRunInitPromptsResolvesEachAnswer(t *testing.T) {
 			// -- nothing safe to install. gpuMonitoringWanted() should end
 			// up false for this one even though GPU itself is true.
 			name:  "gpu on, no dcgm, gpu nodes not ready either",
-			input: "y\ny\ny\nn\ny\nn\nn\n",
+			input: "y\ny\ny\nn\ny\nn\nn\n\n",
 			want:  initAnswers{Metrics: true, Logs: true, Traces: true, SDKAgent: false, GPU: true, DCGMExists: false, GPUReady: false},
+		},
+		{
+			// GPU on, dcgm running, and the user names two inference servers.
+			// Metrics=y, Logs=n, Traces=n (skips SDK), GPU=y, DCGM=y (skips
+			// GPUReady), then the inference multi-select picks vllm + tgi.
+			name:  "gpu on, dcgm running, names vllm+tgi inference servers",
+			input: "y\nn\nn\ny\ny\nvllm,tgi\n",
+			want:  initAnswers{Metrics: true, Logs: false, Traces: false, GPU: true, DCGMExists: true, InferenceServers: []string{"vllm", "tgi"}},
 		},
 		{
 			// GPU monitoring is a bare ServiceMonitor/PrometheusRule with no
@@ -105,7 +147,7 @@ func TestRunInitPromptsResolvesEachAnswer(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if got != c.want {
+			if !reflect.DeepEqual(got, c.want) {
 				t.Errorf("got %+v, want %+v", got, c.want)
 			}
 		})

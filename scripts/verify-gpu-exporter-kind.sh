@@ -56,6 +56,7 @@ done
 : > "$REPORT"
 STEP=0
 declare -a RESULTS=()
+declare -a NOTES=()
 
 log()  { echo "$*" | tee -a "$REPORT"; }
 rule() { log ""; log "════════════════════════════════════════════════════════════════"; }
@@ -79,6 +80,34 @@ run() {
     RESULTS+=("FAIL  $name (exit $code)")
     return $code
   fi
+}
+
+# Like run(), but for a step whose NON-ZERO exit is an EXPECTED, documented
+# outcome rather than a failure -- here, `helm install --wait` on a dcgm-exporter
+# DaemonSet that can never become Ready without a real GPU. It records into
+# NOTES, never into RESULTS, so it is never counted toward the failed-steps
+# total. The authoritative checks for this condition are the placement and
+# crash-reason assertions in the steps below; this step just gets the objects
+# onto the cluster and blocks (via --wait) until the pod has reached its
+# terminal crash state, so those later assertions see a settled pod.
+run_info() {
+  local name="$1"; shift
+  STEP=$((STEP + 1))
+  rule
+  log "STEP $STEP: $name"
+  log "\$ $*"
+  log "────────────────────────────────────────────────────────────────"
+  local start; start=$(date +%s)
+  if "$@" >>"$REPORT" 2>&1; then
+    local dur=$(( $(date +%s) - start ))
+    log "ℹ️  INFO  ($name completed without error, ${dur}s)"
+    NOTES+=("INFO  $name — completed without error")
+  else
+    local code=$? dur=$(( $(date +%s) - start ))
+    log "ℹ️  INFO  ($name exited $code — EXPECTED without real GPU hardware; the crash-reason check below is the authoritative assertion, ${dur}s)"
+    NOTES+=("INFO  $name — exited $code (expected without real GPU; verified by the crash-reason check, not a failure)")
+  fi
+  return 0
 }
 
 cleanup_and_exit() {
@@ -213,7 +242,7 @@ kubectl patch node "$GPU_NODE" --subresource=status --type=merge -p \
 run "helm dependency update  ← pulls the real dcgm-exporter chart" \
   helm dependency update charts/lantern-stack
 
-run "helm install: gpuMonitoring.installExporter + dcgm-exporter, nothing else" \
+run_info "helm install: gpuMonitoring.installExporter + dcgm-exporter, nothing else" \
   helm install lantern charts/lantern-stack \
     -n "$NS" --create-namespace \
     --set kube-prometheus-stack.enabled=false \
@@ -226,16 +255,20 @@ run "helm install: gpuMonitoring.installExporter + dcgm-exporter, nothing else" 
     --set gpuMonitoring.installExporter=true \
     --set dcgm-exporter.enabled=true \
     --set-string dcgm-exporter.nodeSelector."nvidia\.com/gpu\.present"=true \
-    --timeout 3m --wait || true
+    --timeout 3m --wait
 # --set-string, not --set, on that last line deliberately: nodeSelector values
 # are a map[string]string in the Kubernetes API, but plain --set would render
 # an unquoted YAML `true` (a boolean) and the API server rejects the whole
 # object with a type-mismatch error at apply time. Found by actually
 # rendering this exact --set and inspecting the YAML, not assumed.
-# `|| true`: the exporter pod is EXPECTED to crash (see header comment) --
-# `helm install --wait` would otherwise report this whole step as a failure
-# for a reason that has nothing to do with what's being tested. Placement and
-# object-shape checks below are the real assertions.
+#
+# run_info, NOT run: the exporter pod is EXPECTED to crash (see header comment),
+# so `helm install --wait` will time out and exit non-zero for a reason that has
+# nothing to do with what's being tested. run_info records this into the
+# informational NOTES bucket instead of RESULTS, so it never counts as a failed
+# step. --wait is kept deliberately: it blocks until the pod has reached its
+# terminal crash state, so the placement and crash-reason assertions below (the
+# real checks) see a settled pod rather than one still pulling its image.
 
 # --- the real assertions -----------------------------------------------------
 
@@ -297,6 +330,11 @@ rule
 log "SUMMARY"
 log "────────────────────────────────────────────────────────────────"
 printf '%s\n' "${RESULTS[@]}" | tee -a "$REPORT"
+if [ "${#NOTES[@]}" -gt 0 ]; then
+  log ""
+  log "informational (expected outcomes, NOT counted as failures):"
+  printf '%s\n' "${NOTES[@]}" | tee -a "$REPORT"
+fi
 FAILS=$(printf '%s\n' "${RESULTS[@]}" | grep -c '^FAIL' || true)
 log ""
 if [ "${FAILS:-0}" -eq 0 ]; then
