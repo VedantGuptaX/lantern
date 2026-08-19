@@ -236,6 +236,36 @@ func Compile(svc api.ServiceObservability, stack api.ObservabilityStack, facts F
 	// ---- SLOs and burn-rate alerts -----------------------------------------
 
 	slos := svc.Spec.SLOs
+	if len(slos) == 0 && svc.Spec.ServiceKind == api.KindInference {
+		// serviceKind: inference has no semantic-convention family, but a known
+		// inferenceServer unlocks a built-in preset of SLOs against that
+		// server's real metric names -- so a GPU/inference user gets burn-rate
+		// alerts and a populated dashboard with nothing hand-written. This runs
+		// before the generic defaultSLOs path below: the preset's explicit
+		// metrics are what make these compile at all (the stack's HTTP-shaped
+		// defaults never would for inference).
+		if preset, ok := inferencePresetFor(svc.Spec.InferenceServer); ok {
+			slos = preset.slos
+			names := make([]string, len(slos))
+			for i, s := range slos {
+				names[i] = s.Name
+			}
+			out.Diags = append(out.Diags, Diagnostic{
+				Level:   "info",
+				Service: name,
+				Message: fmt.Sprintf("inferenceServer %q: no SLOs declared, applying the built-in preset (%s) against this server's known metric names",
+					svc.Spec.InferenceServer, strings.Join(names, ", ")),
+			})
+			out.Diags = append(out.Diags, Diagnostic{
+				Level:   "warn",
+				Service: name,
+				Message: "built-in inference SLO thresholds are defaults -- review each against your server's actual histogram bucket boundaries; a threshold with no matching bucket reads as always-passing rather than failing loudly",
+			})
+			if preset.note != "" {
+				out.Diags = append(out.Diags, Diagnostic{Level: "warn", Service: name, Message: preset.note})
+			}
+		}
+	}
 	if len(slos) == 0 {
 		slos = defaultSLOs(stack)
 		switch {
@@ -393,6 +423,14 @@ func validate(svc api.ServiceObservability, stack api.ObservabilityStack) error 
 	}
 	if svc.Spec.ServiceKind == "" {
 		return fmt.Errorf("service %q: spec.serviceKind is required", svc.Metadata.Name)
+	}
+	if svc.Spec.InferenceServer != "" {
+		if svc.Spec.ServiceKind != api.KindInference {
+			return fmt.Errorf("service %q: spec.inferenceServer is only valid with serviceKind: inference (got %q)", svc.Metadata.Name, svc.Spec.ServiceKind)
+		}
+		if !validInferenceServer(svc.Spec.InferenceServer) {
+			return fmt.Errorf("service %q: unknown spec.inferenceServer %q (expected one of vllm, triton, nim, tgi)", svc.Metadata.Name, svc.Spec.InferenceServer)
+		}
 	}
 	if api.BoolValue(stack.Spec.Policy.RequireTeamLabel, false) && svc.Spec.Team == "" {
 		return fmt.Errorf("service %q: spec.team is required by the ObservabilityStack policy", svc.Metadata.Name)

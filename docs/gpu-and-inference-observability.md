@@ -4,10 +4,13 @@ Two separate things get asked for together often enough that they're worth
 naming up front, because they go through different halves of Lantern:
 
 1. **GPU node health** — utilization, temperature, power, ECC errors, XID
-   errors — from `dcgm-exporter` (installed by the NVIDIA GPU Operator or its
-   own chart). This is cluster/node-level infrastructure monitoring, the same
-   shape as node-exporter. It goes through `charts/lantern-stack`'s
-   `gpuMonitoring` block, not the compiler — see the [chart
+   errors — from `dcgm-exporter`, normally installed by the NVIDIA GPU
+   Operator or its own chart (bring-your-own; `gpuMonitoring.installExporter`
+   is the one narrow exception where Lantern installs just the exporter
+   itself — see the chart README section linked below). This is
+   cluster/node-level infrastructure monitoring, the same shape as
+   node-exporter. It goes through `charts/lantern-stack`'s `gpuMonitoring`
+   block, not the compiler — see the [chart
    README](../charts/lantern-stack/README.md#gpu--dcgm-monitoring--gpumonitoringenabled).
 2. **Inference-server SLOs** — time-to-first-token (TTFT), inter-token
    latency, request queue depth — from the model-serving container itself
@@ -29,6 +32,44 @@ built-in SLI template** — every SLO on it is built from a `metric:` field you
 supply, pointed at whatever your exporter actually emits. This is deliberate:
 Lantern would rather make you name the metric than guess wrong and generate an
 alert that silently never fires.
+
+There is one shortcut that keeps the safety while removing the typing: set
+`spec.inferenceServer` and Lantern fills the metric names in for you from a
+curated per-server preset — see the next section.
+
+## Built-in presets: `spec.inferenceServer`
+
+Naming your server (`vllm`, `triton`, `nim`, `tgi`) unlocks a built-in set of
+SLOs so you get burn-rate alerts and a populated dashboard with **no metric
+names hand-written**:
+
+```yaml
+spec:
+  serviceKind: inference
+  inferenceServer: vllm     # <- the only line you add
+  target: { kind: Deployment, name: llama-70b-server, metricsPort: metrics }
+  # no slos: block needed
+```
+
+`lantern discover` sets `inferenceServer` automatically from the container
+image (`vllm/vllm-openai` → `vllm`, `tritonserver` → `triton`, `nvcr.io/nim/…`
+→ `nim`, `text-generation-inference` → `tgi`). What each preset generates:
+
+| server | preset SLOs |
+|---|---|
+| `vllm` | ttft (`vllm:time_to_first_token_seconds`), inter-token (`vllm:time_per_output_token_seconds`), queue-depth (`vllm:num_requests_waiting`) |
+| `nim` | same as vLLM, with a caveat: NIM may use a TensorRT-LLM backend whose metric names differ |
+| `triton` | queue-depth (`nv_inference_pending_request_count`) only — Triton exposes no token-latency metrics by default |
+| `tgi` | inter-token (`tgi_request_mean_time_per_token_duration`), queue-depth (`tgi_queue_size`) |
+
+**What is and isn't a guess.** The metric *names* are curated from each
+server's documented output (this table is their source of truth — keep them in
+sync). The *thresholds and objectives* are defaults, so the compiler flags
+every preset application with a `warn` and `lantern discover` marks the field
+`REVIEW`: check each threshold against your server's real histogram buckets, or
+override it by declaring your own `slos:` (an explicit `slos:` block always
+wins over the preset). This is the same caveat the rest of this doc gives —
+just applied automatically instead of only when you remember to.
 
 ## `type: latency` with `metric:` — TTFT, inter-token latency, anything durational
 
@@ -133,6 +174,14 @@ env:
   - name: DCGM_EXPORTER_KUBERNETES
     value: "true"
 ```
+
+If instead you're on the `gpuMonitoring.installExporter: true` self-install
+path (see the chart README), this is already on by default via
+`dcgm-exporter.kubernetes.enablePodLabels: true` in `values.yaml` — nothing
+extra to configure. Either way, verify the resulting label names against a
+live cluster's `/metrics` output before trusting an SLO selector on them, per
+the warning below; chart defaults and NVIDIA's own env var both changed shape
+across versions in the past.
 
 Once that's live, DCGM series carry `pod`, `namespace`, and `container`
 labels, and a saturation SLO can select on them the same way any other SLO

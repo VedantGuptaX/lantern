@@ -18,6 +18,10 @@ spec:
     - port: metrics
       interval: 30s
       path: /metrics
+      relabelings:
+        - action: replace
+          targetLabel: job
+          replacement: shop/settlement-worker
       metricRelabelings:
         - action: labeldrop
           regex: email|request_id|session_id|user_id

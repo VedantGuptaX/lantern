@@ -45,6 +45,10 @@ spec:
     - port: http-metrics
       interval: 30s
       path: /metrics
+      relabelings:
+        - action: replace
+          targetLabel: job
+          replacement: shop/checkout-api
       metricRelabelings:
         - action: labeldrop
           regex: email|request_id|session_id|user_id

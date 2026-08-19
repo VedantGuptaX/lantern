@@ -53,6 +53,13 @@ NS ?= observability
 preflight:
 	./scripts/preflight-check.sh -n $(NS) -r lantern
 
+# Separate from `preflight` above deliberately: most installs have no GPU
+# nodes at all, so running this by default would just print a redundant
+# BLOCK/skip line on every install. Only run this if you intend to set
+# gpuMonitoring.installExporter: true (see charts/lantern-stack/README.md).
+preflight-gpu:
+	./scripts/preflight-check.sh -n $(NS) -r lantern --gpu-install-exporter
+
 # The OpenTelemetryCollector CRD (kube-prometheus-stack's CRDs are fine —
 # they live in the chart's crds/ directory, which Helm guarantees runs before
 # anything else) ships as a regular template in the opentelemetry-operator

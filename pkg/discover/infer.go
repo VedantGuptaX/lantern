@@ -99,8 +99,12 @@ func discoverOne(w Workload, opts Options) Result {
 
 	// --- service kind ------------------------------------------------------
 
-	kind, kindWhy, kindLow := inferServiceKind(w)
+	kind, inferenceServer, kindWhy, kindLow := inferServiceKind(w)
 	note("serviceKind", string(kind), kindWhy, kindLow)
+	if inferenceServer != "" {
+		note("inferenceServer", string(inferenceServer),
+			"detected from the image; unlocks the built-in SLO preset — review the default thresholds against the server's real histogram buckets before relying on the alerts", true)
+	}
 
 	// --- team --------------------------------------------------------------
 
@@ -164,6 +168,7 @@ func discoverOne(w Workload, opts Options) Result {
 				MetricsPort: metricsPort,
 			},
 			ServiceKind:     kind,
+			InferenceServer: inferenceServer,
 			Team:            team,
 			Instrumentation: instr,
 		},
@@ -212,27 +217,47 @@ func matchInfraImage(images []string) (api.ServiceKind, string, bool) {
 // private mirror of vllm/vllm-openai, etc. — and a missed match here just
 // means the workload falls through to the generic HTTP guess, which is
 // always flagged for review anyway.
-var inferenceImageHints = []string{
-	"vllm", "tritonserver", "nvcr.io/nim", "/nim-", "text-generation-inference",
-	"tgi", "tensorrt-llm", "trt-llm", "ray-llm", "lmdeploy",
+// Each hint maps an image substring to the InferenceServer it implies. A blank
+// server means "recognisably a model server, but which one is ambiguous from
+// the image" (TensorRT-LLM is served many ways; ray-llm/lmdeploy have no preset
+// yet) -- still serviceKind: inference, just no built-in SLO preset. More
+// specific substrings come first so a NIM/Triton image isn't caught by a looser
+// hint.
+var inferenceImageHints = []struct {
+	substr string
+	server api.InferenceServer
+}{
+	{"vllm", api.InferenceVLLM},
+	{"tritonserver", api.InferenceTriton},
+	{"nvcr.io/nim", api.InferenceNIM},
+	{"/nim-", api.InferenceNIM},
+	{"text-generation-inference", api.InferenceTGI},
+	{"tgi", api.InferenceTGI},
+	{"tensorrt-llm", ""},
+	{"trt-llm", ""},
+	{"ray-llm", ""},
+	{"lmdeploy", ""},
 }
 
-func matchInferenceImage(images []string) (string, bool) {
+func matchInferenceImage(images []string) (string, api.InferenceServer, bool) {
 	for _, img := range images {
 		l := strings.ToLower(img)
-		for _, hint := range inferenceImageHints {
-			if strings.Contains(l, hint) {
-				return img, true
+		for _, h := range inferenceImageHints {
+			if strings.Contains(l, h.substr) {
+				return img, h.server, true
 			}
 		}
 	}
-	return "", false
+	return "", "", false
 }
 
-// inferServiceKind guesses what the workload does from its ports and name.
-func inferServiceKind(w Workload) (api.ServiceKind, string, bool) {
+// inferServiceKind guesses what the workload does from its ports and name. For
+// serviceKind: inference it also returns the detected InferenceServer (blank if
+// the workload is a model server whose exact stack is ambiguous, or if it was
+// classified inference only by its nvidia.com/gpu request).
+func inferServiceKind(w Workload) (api.ServiceKind, api.InferenceServer, string, bool) {
 	if w.Kind == "CronJob" {
-		return api.KindCron, "workload is a CronJob", false
+		return api.KindCron, "", "workload is a CronJob", false
 	}
 
 	// Checked before the generic infra/HTTP heuristics: a GPU inference
@@ -240,24 +265,29 @@ func inferServiceKind(w Workload) (api.ServiceKind, string, bool) {
 	// OpenAI-compatible endpoint, which would otherwise get misclassified as
 	// a plain HTTP service and lose its shot at ttft/inter-token-latency/
 	// queue-depth SLOs.
-	if img, ok := matchInferenceImage(w.Images()); ok {
-		return api.KindInference, fmt.Sprintf(
+	if img, server, ok := matchInferenceImage(w.Images()); ok {
+		if server != "" {
+			return api.KindInference, server, fmt.Sprintf(
+				"image %q matches %s; the built-in %s SLO preset (ttft/inter-token/queue-depth) will apply automatically", img, server, server,
+			), true
+		}
+		return api.KindInference, "", fmt.Sprintf(
 			"image %q matches a known GPU model-serving project; set slos with an explicit metric (see docs) once you know its export names", img,
 		), true
 	}
 	if w.GPURequested() {
-		return api.KindInference, "container requests nvidia.com/gpu; assuming a GPU model-serving workload — correct this if it's GPU-accelerated batch/training work instead", true
+		return api.KindInference, "", "container requests nvidia.com/gpu; assuming a GPU model-serving workload — correct this if it's GPU-accelerated batch/training work instead", true
 	}
 
 	if kind, why, ok := matchInfraImage(w.Images()); ok {
-		return kind, why + "; it will not emit OpenTelemetry HTTP metrics, so consider type: custom SLOs or an exporter", true
+		return kind, "", why + "; it will not emit OpenTelemetry HTTP metrics, so consider type: custom SLOs or an exporter", true
 	}
 
 	ports := w.Ports()
 	for _, p := range ports {
 		n := strings.ToLower(p.Name)
 		if n == "grpc" || strings.HasPrefix(n, "grpc-") || p.Port == 50051 {
-			return api.KindGRPC, fmt.Sprintf("container port %q", p.Name), false
+			return api.KindGRPC, "", fmt.Sprintf("container port %q", p.Name), false
 		}
 	}
 	for _, p := range ports {
@@ -266,14 +296,14 @@ func inferServiceKind(w Workload) (api.ServiceKind, string, bool) {
 			if n == "http-metrics" {
 				continue
 			}
-			return api.KindHTTP, fmt.Sprintf("container port %q", p.Name), false
+			return api.KindHTTP, "", fmt.Sprintf("container port %q", p.Name), false
 		}
 	}
 
 	name := strings.ToLower(w.Name)
 	for _, hint := range []string{"worker", "consumer", "processor", "ingest", "queue"} {
 		if strings.Contains(name, hint) {
-			return api.KindWorker, fmt.Sprintf("workload name contains %q", hint), true
+			return api.KindWorker, "", fmt.Sprintf("workload name contains %q", hint), true
 		}
 	}
 
@@ -285,16 +315,16 @@ func inferServiceKind(w Workload) (api.ServiceKind, string, bool) {
 		}
 	}
 	if serving == 0 {
-		return api.KindWorker, "workload exposes no serving port", true
+		return api.KindWorker, "", "workload exposes no serving port", true
 	}
 
 	for _, p := range ports {
 		if p.Port == 80 || p.Port == 8080 || p.Port == 8000 || p.Port == 3000 {
-			return api.KindHTTP, fmt.Sprintf("container port %d is a conventional HTTP port", p.Port), true
+			return api.KindHTTP, "", fmt.Sprintf("container port %d is a conventional HTTP port", p.Port), true
 		}
 	}
 
-	return api.KindHTTP, "defaulted; no conclusive port or name evidence", true
+	return api.KindHTTP, "", "defaulted; no conclusive port or name evidence", true
 }
 
 // teamLabels are checked in order of how deliberate they are as an ownership
@@ -423,6 +453,9 @@ func renderSpec(s api.ServiceObservability) string {
 		"target", target,
 		"serviceKind", yamlx.S(string(s.Spec.ServiceKind)),
 	)
+	if s.Spec.InferenceServer != "" {
+		spec.Set("inferenceServer", yamlx.S(string(s.Spec.InferenceServer)))
+	}
 	if s.Spec.Team != "" {
 		spec.Set("team", yamlx.S(s.Spec.Team))
 	}

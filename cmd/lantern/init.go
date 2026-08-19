@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -13,11 +14,43 @@ import (
 // Each field maps directly onto one or more Helm subchart toggles -- see
 // renderValues.
 type initAnswers struct {
-	Metrics  bool // kube-prometheus-stack (Prometheus, Alertmanager, Grafana, node-exporter)
-	Logs     bool // loki + logsCollector
-	Traces   bool // tempo
-	SDKAgent bool // opentelemetry-operator; only asked/meaningful if Traces
-	GPU      bool // gpuMonitoring (ServiceMonitor/PrometheusRule only -- dcgm-exporter itself is bring-your-own)
+	Metrics    bool // kube-prometheus-stack (Prometheus, Alertmanager, Grafana, node-exporter)
+	Logs       bool // loki + logsCollector
+	Traces     bool // tempo
+	SDKAgent   bool // opentelemetry-operator; only asked/meaningful if Traces
+	GPU        bool // gpuMonitoring wanted at all; only asked if Metrics
+	DCGMExists bool // dcgm-exporter already running; only asked if GPU
+	GPUReady   bool // GPU nodes already schedule real GPU workloads (driver+device plugin proven); only asked if GPU && !DCGMExists
+	// InferenceServers are the model-serving stacks (vllm/triton/nim/tgi) the
+	// user runs on those GPU nodes; only asked if GPU. These don't map to Helm
+	// toggles -- inference observability is per-service -- but they drive the
+	// built-in SLO preset the compiler applies once `lantern discover` sets
+	// spec.inferenceServer. Recorded here to tailor init's next-steps output.
+	InferenceServers []string
+}
+
+// installExporter reports whether these answers want Lantern to install
+// dcgm-exporter itself (the gpuMonitoring.installExporter / dcgm-exporter.enabled
+// pair in values.yaml), rather than assuming a bring-your-own install.
+//
+// This is deliberately narrow: it's only true when the user said there's no
+// dcgm-exporter yet AND that the GPU nodes already run real GPU workloads
+// (driver + device plugin proven working). `lantern init` never touches a
+// live cluster (see CLAUDE.md), so it cannot verify that claim itself --
+// `scripts/preflight-check.sh --gpu-install-exporter` is the actual gate,
+// against the real cluster, before anyone runs `helm install`.
+func (a initAnswers) installExporter() bool {
+	return a.GPU && !a.DCGMExists && a.GPUReady
+}
+
+// gpuMonitoringWanted reports whether gpuMonitoring.enabled should end up
+// true. A "yes" to the top-level GPU question isn't enough by itself: with
+// no dcgm-exporter running and no GPU nodes ready to host one, there is
+// nothing for the ServiceMonitor/PrometheusRule this turns on to scrape or
+// evaluate -- same reasoning as the existing "metrics off skips GPU
+// entirely" rule below, just discovered one layer deeper.
+func (a initAnswers) gpuMonitoringWanted() bool {
+	return a.GPU && (a.DCGMExists || a.GPUReady)
 }
 
 // grafanaOnly reports whether the answers want a Grafana UI without the rest
@@ -106,6 +139,66 @@ func promptYesNo(r *bufio.Reader, w io.Writer, question string, def bool) (bool,
 	}
 }
 
+// promptMultiChoice asks the user to pick zero or more of options, shown as a
+// numbered menu. It accepts comma- or space-separated indices ("1,3") or option
+// names ("vllm tgi"), case-insensitively; empty input selects none. Any token it
+// can't map re-prompts the whole question. Returns the selected option strings
+// in menu order. Same pure, canned-reader-testable shape as promptYesNo.
+func promptMultiChoice(r *bufio.Reader, w io.Writer, question string, options []string) ([]string, error) {
+	for {
+		fmt.Fprintln(w, question)
+		for i, o := range options {
+			fmt.Fprintf(w, "    %d) %s\n", i+1, o)
+		}
+		fmt.Fprint(w, "  (comma/space-separated numbers or names, or enter to skip) ")
+		line, err := r.ReadString('\n')
+		if err != nil && line == "" {
+			return nil, err
+		}
+		fields := strings.FieldsFunc(line, func(c rune) bool {
+			return c == ',' || c == ' ' || c == '\t' || c == '\n' || c == '\r'
+		})
+		if len(fields) == 0 {
+			return nil, nil
+		}
+		selected := make([]bool, len(options))
+		bad := ""
+		for _, f := range fields {
+			f = strings.ToLower(f)
+			matched := false
+			if n, convErr := strconv.Atoi(f); convErr == nil {
+				if n >= 1 && n <= len(options) {
+					selected[n-1] = true
+					matched = true
+				}
+			} else {
+				for i, o := range options {
+					if strings.ToLower(o) == f {
+						selected[i] = true
+						matched = true
+						break
+					}
+				}
+			}
+			if !matched {
+				bad = f
+				break
+			}
+		}
+		if bad != "" {
+			fmt.Fprintf(w, "didn't understand %q — use the numbers or names shown\n", bad)
+			continue
+		}
+		var out []string
+		for i, o := range options {
+			if selected[i] {
+				out = append(out, o)
+			}
+		}
+		return out, nil
+	}
+}
+
 // runInitPrompts asks the questions and returns the answers. Separated from
 // terminal I/O so it's testable with a canned reader/writer, matching this
 // package's existing style (reorderArgs/render are pure, main just wires
@@ -157,6 +250,38 @@ func runInitPrompts(r io.Reader, w io.Writer) (initAnswers, error) {
 	if a.Metrics {
 		if a.GPU, err = promptYesNo(br, w, "GPU node monitoring (DCGM)? Skip if you have no GPU nodes.", false); err != nil {
 			return a, err
+		}
+		if a.GPU {
+			if a.DCGMExists, err = promptYesNo(br, w,
+				"  Is dcgm-exporter already running on those GPU nodes (via the NVIDIA\n"+
+					"  GPU Operator or its own install)?", true); err != nil {
+				return a, err
+			}
+			if !a.DCGMExists {
+				if a.GPUReady, err = promptYesNo(br, w,
+					"  Do those GPU nodes already run real GPU workloads successfully --\n"+
+						"  i.e. something has already been scheduled against the nvidia.com/gpu\n"+
+						"  resource, so the driver and device plugin are proven working, just no\n"+
+						"  dcgm-exporter yet? If so I can install ONLY dcgm-exporter (not the\n"+
+						"  full GPU Operator, no driver changes). Answering no leaves GPU\n"+
+						"  monitoring off entirely -- there'd be nothing safe to install and\n"+
+						"  nothing running to point a ServiceMonitor at.",
+					false); err != nil {
+					return a, err
+				}
+			}
+			// dcgm-exporter above is GPU *node health*. This is the other half:
+			// inference-server SLOs. Naming the server(s) lets the compiler apply
+			// a built-in SLO preset (ttft / inter-token / queue-depth) per service
+			// with no metric names hand-written -- the point of the whole flow.
+			if a.InferenceServers, err = promptMultiChoice(br, w,
+				"  Which inference servers run on those GPU nodes? Lantern will auto-build\n"+
+					"  their SLOs + dashboard panels (time-to-first-token, inter-token latency,\n"+
+					"  queue depth) with no metric names to write. Pick any that apply, or skip\n"+
+					"  for non-serving GPU work (training/batch):",
+				[]string{"vllm", "triton", "nim", "tgi"}); err != nil {
+				return a, err
+			}
 		}
 	}
 
@@ -255,17 +380,45 @@ func renderValues(a initAnswers) string {
 	fmt.Fprintf(&b, "tempo:\n  enabled: %v\n\n", a.Traces)
 	fmt.Fprintf(&b, "collector:\n  enabled: %v\n\n", a.collectorNeeded())
 	fmt.Fprintf(&b, "opentelemetry-operator:\n  enabled: %v\n\n", a.operatorNeeded())
-	fmt.Fprintf(&b, "gpuMonitoring:\n  enabled: %v\n", a.GPU)
+	fmt.Fprintf(&b, "gpuMonitoring:\n  enabled: %v\n  installExporter: %v\n", a.gpuMonitoringWanted(), a.installExporter())
+	fmt.Fprintf(&b, "dcgm-exporter:\n  enabled: %v\n", a.installExporter())
+
+	if len(a.InferenceServers) > 0 {
+		fmt.Fprintf(&b, "\n# Inference servers you named: %s.\n", strings.Join(a.InferenceServers, ", "))
+		b.WriteString("# There's no Helm toggle for these -- inference observability is per-service.\n")
+		b.WriteString("# Run `lantern discover` (it auto-detects these images as serviceKind:\n")
+		b.WriteString("# inference and sets inferenceServer), then `lantern synth`: each such service\n")
+		b.WriteString("# gets a built-in SLO set (ttft / inter-token / queue-depth) + dashboard with\n")
+		b.WriteString("# no metric names to hand-write. Review the default thresholds (marked REVIEW)\n")
+		b.WriteString("# before trusting the alerts.\n")
+	}
 
 	if a.Traces && !a.SDKAgent {
 		b.WriteString("\n# Traces without SDK/agent instrumentation means eBPF (OBI). This chart\n")
 		b.WriteString("# doesn't deploy OBI itself (a standalone Helm release, bring-your-own) --\n")
 		b.WriteString("# see docs/getting-signals-into-grafana.md for a verified install command.\n")
 	}
-	if a.GPU {
+	if a.gpuMonitoringWanted() && !a.installExporter() {
 		b.WriteString("\n# gpuMonitoring.enabled only adds a ServiceMonitor + PrometheusRule --\n")
 		b.WriteString("# dcgm-exporter itself is bring-your-own (the NVIDIA GPU Operator's job, not\n")
 		b.WriteString("# this chart's). See README's GPU section before turning this on.\n")
+	}
+	if a.installExporter() {
+		b.WriteString("\n# dcgm-exporter.enabled installs ONLY the exporter, not the GPU Operator --\n")
+		b.WriteString("# no driver, no container toolkit. Before running `helm install`:\n")
+		b.WriteString("#   1. Run `./scripts/preflight-check.sh --gpu-install-exporter` against the\n")
+		b.WriteString("#      real cluster -- it BLOCKs unless a node already advertises nvidia.com/gpu\n")
+		b.WriteString("#      as allocatable, and prints candidate labels for the next step.\n")
+		b.WriteString("#   2. Set dcgm-exporter.nodeSelector in values.yaml to one of those labels.\n")
+		b.WriteString("#      It's empty by default; left empty, the DaemonSet schedules onto every\n")
+		b.WriteString("#      node, not just GPU ones, and CrashLoopBackOffs everywhere else.\n")
+	}
+	if a.GPU && !a.DCGMExists && !a.GPUReady {
+		b.WriteString("\n# You said you have GPU nodes, no dcgm-exporter running yet, and those nodes\n")
+		b.WriteString("# aren't yet running real GPU workloads -- so there's nothing safe to install\n")
+		b.WriteString("# or point a ServiceMonitor at. GPU monitoring is left off (gpuMonitoring.\n")
+		b.WriteString("# enabled: false above). Get the NVIDIA driver + device plugin working first\n")
+		b.WriteString("# (NVIDIA GPU Operator is the standard path), then re-run `lantern init`.\n")
 	}
 
 	return b.String()
@@ -309,6 +462,13 @@ func resourceEstimate(a initAnswers) string {
 		if !a.SDKAgent {
 			rows = append(rows, row{"OBI (eBPF probe, bring-your-own)", 0, 0, 10, 256})
 		}
+	}
+	if a.installExporter() {
+		// Low end of the request range NVIDIA publishes (README's GPU
+		// prerequisites table) -- unlike the rows above, not measured
+		// against a real cluster this session, since this bastion's cluster
+		// has no GPU nodes to measure against.
+		rows = append(rows, row{"dcgm-exporter (installExporter -- NVIDIA's published low end, not measured this session)", 0, 0, 10, 128})
 	}
 
 	var totalCPU, totalMem, perNodeCPU, perNodeMem int
@@ -365,5 +525,15 @@ func runInit(outPath string) error {
 	fmt.Printf("  helm install lantern charts/lantern-stack \\\n")
 	fmt.Printf("    -f charts/lantern-stack/values-quickstart.yaml \\\n")
 	fmt.Printf("    -f %s\n", outPath)
+
+	if len(answers.InferenceServers) > 0 {
+		fmt.Printf("\nThen wire up your inference servers (%s) automatically — no metric names to write:\n\n",
+			strings.Join(answers.InferenceServers, ", "))
+		fmt.Printf("  lantern discover - < workloads.yaml > services.yaml   # sets serviceKind: inference + inferenceServer\n")
+		fmt.Printf("  lantern synth -stack stack.yaml services.yaml | kubectl apply -f -\n")
+		fmt.Printf("\nEach detected service gets built-in TTFT / inter-token / queue-depth SLOs and a\n")
+		fmt.Printf("dashboard. The default thresholds are marked REVIEW — check them against your\n")
+		fmt.Printf("server's actual metrics before relying on the alerts.\n")
+	}
 	return nil
 }

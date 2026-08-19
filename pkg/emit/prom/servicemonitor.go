@@ -78,6 +78,24 @@ func BuildServiceMonitor(in MonitorInput) (*kube.Object, []Diagnostic, error) {
 		"path", yamlx.S("/metrics"),
 	)
 
+	// Pin the `job` label to "<namespace>/<service>". This is not cosmetic: for
+	// instrumentation mode: none, SeriesSelector below builds the SLI's label
+	// matcher as job="<namespace>/<service>", but the Prometheus Operator's
+	// default job label for a ServiceMonitor target is the scraped Service's
+	// name (no namespace prefix) -- so without this relabeling the recording
+	// rules and burn-rate alerts select nothing and read as "always healthy",
+	// exactly the silent failure SeriesSelector's own comment warns about. A
+	// replace action with no sourceLabels sets the target label to the literal
+	// replacement. (For agent/eBPF modes the SLI selects on service_name
+	// instead, so pinning job is harmless there and keeps the label consistent.)
+	endpoint.Set("relabelings", yamlx.NewSeq(
+		yamlx.NewMap(
+			"action", yamlx.S("replace"),
+			"targetLabel", yamlx.S("job"),
+			"replacement", yamlx.S(in.Namespace+"/"+in.Service),
+		),
+	))
+
 	if len(in.DenyLabels) > 0 {
 		deny := append([]string(nil), in.DenyLabels...)
 		sort.Strings(deny)

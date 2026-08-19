@@ -146,11 +146,15 @@ func BuildSLI(slo api.SLO, kind api.ServiceKind, selector string) (SLI, error) {
 		if err != nil {
 			return SLI{}, fmt.Errorf("slo %q: threshold %q must be a plain number for type saturation: %w", slo.Name, slo.Threshold, err)
 		}
-		// count_over_time((gauge > bool N)[window:]) counts the samples where
-		// the gauge breached N; dividing by the total sample count over the
-		// same window gives the same bad/total ratio shape every other SLO
+		// sum_over_time((gauge > bool N)[window:]) counts the samples where the
+		// gauge breached N: `> bool N` yields 1 at each breaching sample and 0
+		// otherwise, so summing gives the breach count. (count_over_time here
+		// would be wrong -- it counts every sample, 0s included, making the
+		// ratio identically 1 and the SLO permanently "100% bad"; confirmed
+		// against a live Prometheus.) Dividing by the total sample count over
+		// the same window gives the same bad/total ratio shape every other SLO
 		// type produces, so it gets the same burn-rate alerts for free.
-		bad := fmt.Sprintf("count_over_time((%s{%s} > bool %s)[{{.window}}:])", slo.Metric, selector, trimFloat(n))
+		bad := fmt.Sprintf("sum_over_time((%s{%s} > bool %s)[{{.window}}:])", slo.Metric, selector, trimFloat(n))
 		total := fmt.Sprintf("count_over_time(%s{%s}[{{.window}}:])", slo.Metric, selector)
 		return SLI{Error: bad, Total: total, Experimental: true}, nil
 

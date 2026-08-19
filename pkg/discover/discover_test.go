@@ -149,15 +149,26 @@ func TestGPUWorkloadGetsInferenceKindAndNoAgentInjection(t *testing.T) {
 	if r.Service.Spec.Instrumentation.Mode != api.ModeNone {
 		t.Errorf("instrumentation.mode = %q, want none", r.Service.Spec.Instrumentation.Mode)
 	}
+	// A recognised vLLM image must also pin inferenceServer, which is what
+	// unlocks the compiler's built-in SLO preset for this service.
+	if r.Service.Spec.InferenceServer != api.InferenceVLLM {
+		t.Errorf("inferenceServer = %q, want vllm", r.Service.Spec.InferenceServer)
+	}
 
-	var flagged bool
+	var flagged, serverNoted bool
 	for _, n := range r.Notes {
 		if n.Field == "serviceKind" && n.LowConfidence {
 			flagged = true
 		}
+		if n.Field == "inferenceServer" && n.Value == "vllm" {
+			serverNoted = true
+		}
 	}
 	if !flagged {
 		t.Error("an inference guess must be flagged for review like any other inferred serviceKind")
+	}
+	if !serverNoted {
+		t.Error("a detected inferenceServer must be recorded as a note so the user reviews the preset's default thresholds")
 	}
 }
 
@@ -199,6 +210,11 @@ spec:
 	}
 	if results[0].Service.Spec.ServiceKind != api.KindInference {
 		t.Errorf("serviceKind = %q, want inference (nvidia.com/gpu limit was set)", results[0].Service.Spec.ServiceKind)
+	}
+	// Classified inference by the GPU request alone -- the server is unknown, so
+	// inferenceServer must stay empty (no preset guessed for an unknown image).
+	if results[0].Service.Spec.InferenceServer != "" {
+		t.Errorf("inferenceServer = %q, want empty (image is unrecognised; only the GPU request triggered inference)", results[0].Service.Spec.InferenceServer)
 	}
 }
 
