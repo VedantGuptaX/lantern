@@ -64,9 +64,25 @@ func TestRunInitPromptsResolvesEachAnswer(t *testing.T) {
 			want:  initAnswers{Metrics: true, Logs: true, Traces: false, SDKAgent: false, GPU: false},
 		},
 		{
-			name:  "gpu on",
-			input: "y\ny\ny\nn\ny\n",
-			want:  initAnswers{Metrics: true, Logs: true, Traces: true, SDKAgent: false, GPU: true},
+			name:  "gpu on, dcgm already running (default path -- bring your own)",
+			input: "y\ny\ny\nn\ny\ny\n",
+			want:  initAnswers{Metrics: true, Logs: true, Traces: true, SDKAgent: false, GPU: true, DCGMExists: true},
+		},
+		{
+			// No dcgm-exporter yet, but the GPU nodes already prove out a
+			// working driver/device plugin -- this is the one combination
+			// that should end up with installExporter() true.
+			name:  "gpu on, no dcgm yet, gpu nodes already GPU-ready",
+			input: "y\ny\ny\nn\ny\nn\ny\n",
+			want:  initAnswers{Metrics: true, Logs: true, Traces: true, SDKAgent: false, GPU: true, DCGMExists: false, GPUReady: true},
+		},
+		{
+			// No dcgm-exporter, and the GPU nodes aren't proven ready either
+			// -- nothing safe to install. gpuMonitoringWanted() should end
+			// up false for this one even though GPU itself is true.
+			name:  "gpu on, no dcgm, gpu nodes not ready either",
+			input: "y\ny\ny\nn\ny\nn\nn\n",
+			want:  initAnswers{Metrics: true, Logs: true, Traces: true, SDKAgent: false, GPU: true, DCGMExists: false, GPUReady: false},
 		},
 		{
 			// GPU monitoring is a bare ServiceMonitor/PrometheusRule with no
@@ -288,6 +304,52 @@ func TestRenderValuesDataSourcesBlockPresentWhenGrafanaOnly(t *testing.T) {
 	mustContain(t, out, "additionalDataSources:")
 	mustContain(t, out, "name: Tempo")
 	mustContain(t, out, "name: Loki")
+}
+
+func TestInstallExporterOnlyWhenGPUReadyWithoutExistingDCGM(t *testing.T) {
+	cases := []struct {
+		name                    string
+		a                       initAnswers
+		wantInstallExporter     bool
+		wantGPUMonitoringWanted bool
+	}{
+		{"no GPU at all", initAnswers{}, false, false},
+		{"GPU wanted, dcgm already running", initAnswers{GPU: true, DCGMExists: true}, false, true},
+		{"GPU wanted, no dcgm, nodes GPU-ready", initAnswers{GPU: true, GPUReady: true}, true, true},
+		{"GPU wanted, no dcgm, nodes not ready", initAnswers{GPU: true}, false, false},
+		{"dcgm already running takes priority even if GPUReady also true", initAnswers{GPU: true, DCGMExists: true, GPUReady: true}, false, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.a.installExporter(); got != c.wantInstallExporter {
+				t.Errorf("installExporter() = %v, want %v", got, c.wantInstallExporter)
+			}
+			if got := c.a.gpuMonitoringWanted(); got != c.wantGPUMonitoringWanted {
+				t.Errorf("gpuMonitoringWanted() = %v, want %v", got, c.wantGPUMonitoringWanted)
+			}
+		})
+	}
+}
+
+func TestRenderValuesDcgmExporterTogglesMatchInstallExporter(t *testing.T) {
+	// Bring-your-own: gpuMonitoring on, but nothing installed by this chart.
+	out := renderValues(initAnswers{Metrics: true, GPU: true, DCGMExists: true})
+	mustContain(t, out, "gpuMonitoring:\n  enabled: true\n  installExporter: false")
+	mustContain(t, out, "dcgm-exporter:\n  enabled: false")
+	mustContain(t, out, "dcgm-exporter itself is bring-your-own")
+
+	// Self-install: nodes proven GPU-ready, no dcgm-exporter yet.
+	out = renderValues(initAnswers{Metrics: true, GPU: true, GPUReady: true})
+	mustContain(t, out, "gpuMonitoring:\n  enabled: true\n  installExporter: true")
+	mustContain(t, out, "dcgm-exporter:\n  enabled: true")
+	mustContain(t, out, "preflight-check.sh --gpu-install-exporter")
+	mustContain(t, out, "dcgm-exporter.nodeSelector")
+
+	// Nothing safe to do: no dcgm, nodes not proven ready either.
+	out = renderValues(initAnswers{Metrics: true, GPU: true})
+	mustContain(t, out, "gpuMonitoring:\n  enabled: false\n  installExporter: false")
+	mustContain(t, out, "dcgm-exporter:\n  enabled: false")
+	mustContain(t, out, "nothing safe to install")
 }
 
 func mustContain(t *testing.T, haystack, needle string) {

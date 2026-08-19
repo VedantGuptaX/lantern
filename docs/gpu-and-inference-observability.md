@@ -4,10 +4,13 @@ Two separate things get asked for together often enough that they're worth
 naming up front, because they go through different halves of Lantern:
 
 1. **GPU node health** — utilization, temperature, power, ECC errors, XID
-   errors — from `dcgm-exporter` (installed by the NVIDIA GPU Operator or its
-   own chart). This is cluster/node-level infrastructure monitoring, the same
-   shape as node-exporter. It goes through `charts/lantern-stack`'s
-   `gpuMonitoring` block, not the compiler — see the [chart
+   errors — from `dcgm-exporter`, normally installed by the NVIDIA GPU
+   Operator or its own chart (bring-your-own; `gpuMonitoring.installExporter`
+   is the one narrow exception where Lantern installs just the exporter
+   itself — see the chart README section linked below). This is
+   cluster/node-level infrastructure monitoring, the same shape as
+   node-exporter. It goes through `charts/lantern-stack`'s `gpuMonitoring`
+   block, not the compiler — see the [chart
    README](../charts/lantern-stack/README.md#gpu--dcgm-monitoring--gpumonitoringenabled).
 2. **Inference-server SLOs** — time-to-first-token (TTFT), inter-token
    latency, request queue depth — from the model-serving container itself
@@ -133,6 +136,14 @@ env:
   - name: DCGM_EXPORTER_KUBERNETES
     value: "true"
 ```
+
+If instead you're on the `gpuMonitoring.installExporter: true` self-install
+path (see the chart README), this is already on by default via
+`dcgm-exporter.kubernetes.enablePodLabels: true` in `values.yaml` — nothing
+extra to configure. Either way, verify the resulting label names against a
+live cluster's `/metrics` output before trusting an SLO selector on them, per
+the warning below; chart defaults and NVIDIA's own env var both changed shape
+across versions in the past.
 
 Once that's live, DCGM series carry `pod`, `namespace`, and `container`
 labels, and a saturation SLO can select on them the same way any other SLO

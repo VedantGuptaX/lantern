@@ -383,6 +383,15 @@ plan around. The other 7 components of the GPU Operator stack are not —
 measure them for real on your own GPU nodes before assuming a number, the
 same discipline this project asks of you for PromQL metric names.
 
+**The one exception:** `gpuMonitoring.installExporter: true` has Lantern
+install *just* `dcgm-exporter` (not the other 7 components above, not a
+driver) for GPU nodes that already run real GPU workloads successfully but
+have no dcgm-exporter yet. Gated by
+`./scripts/preflight-check.sh --gpu-install-exporter`, which BLOCKs unless a
+node already advertises `nvidia.com/gpu` as allocatable. See [the chart
+README](charts/lantern-stack/README.md#gpumonitoringinstallexporter--the-one-case-this-chart-will-install)
+for the full procedure.
+
 ## Not installing this blind — the preflight check
 
 Here's the specific failure mode this exists to catch: `helm install` on a

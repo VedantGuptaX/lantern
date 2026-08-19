@@ -35,18 +35,26 @@
 #   ./scripts/preflight-check.sh -n observability  # explicit namespace
 #   ./scripts/preflight-check.sh -r lantern        # explicit intended release name
 #   ./scripts/preflight-check.sh --strict          # treat warnings as blocking too
+#   ./scripts/preflight-check.sh --gpu-install-exporter
+#       # also gate gpuMonitoring.installExporter=true (see values.yaml): BLOCKs
+#       # unless at least one node already advertises nvidia.com/gpu as
+#       # allocatable -- the only cluster-visible proof the driver and device
+#       # plugin are actually working. Pass this whenever you intend to turn
+#       # that value on; it is not implied by --strict.
 
 set -uo pipefail
 
 NAMESPACE=observability
 RELEASE=lantern
 STRICT=0
+GPU_INSTALL_EXPORTER=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     -n) NAMESPACE="$2"; shift 2 ;;
     -r) RELEASE="$2"; shift 2 ;;
     --strict) STRICT=1; shift ;;
+    --gpu-install-exporter) GPU_INSTALL_EXPORTER=1; shift ;;
     *) echo "unknown flag: $1" >&2; exit 1 ;;
   esac
 done
@@ -327,6 +335,36 @@ if [ -n "$ALLOC_CPU" ] && [ -n "$ALLOC_MEM_KI" ] && [ "$ALLOC_CPU" != "null" ]; 
   fi
 else
   warn "could not compute node capacity (jq parse issue or empty cluster) — check manually with 'kubectl describe nodes'"
+fi
+
+# ---------------------------------------------------------------------------
+# 6. GPU exporter install readiness -- only when explicitly asked for, since
+#    most installs never touch gpuMonitoring.installExporter at all.
+# ---------------------------------------------------------------------------
+say ""
+say "6. GPU exporter install readiness (gpuMonitoring.installExporter)"
+if [ "$GPU_INSTALL_EXPORTER" -eq 1 ]; then
+  GPU_NODES=$(kubectl get nodes -o json 2>/dev/null | jq -r '
+    .items[] | select((.status.allocatable["nvidia.com/gpu"] // "0" | tonumber) > 0) | .metadata.name')
+  if [ -z "$GPU_NODES" ]; then
+    block "no node currently advertises nvidia.com/gpu as allocatable -- that's the only cluster-visible proof the driver and device plugin are actually working. Installing dcgm-exporter here would schedule it onto nodes with no working GPU stack and it will CrashLoopBackOff. Get GPU nodes running real workloads first (NVIDIA GPU Operator, or driver + device plugin installed some other way), or leave gpuMonitoring.installExporter: false and dcgm-exporter.enabled: false."
+  else
+    GPU_NODE_COUNT=$(printf '%s\n' "$GPU_NODES" | wc -l | tr -d ' ')
+    pass "$GPU_NODE_COUNT node(s) already advertise nvidia.com/gpu as allocatable -- installExporter is safe to enable"
+    say "     GPU node(s): $(printf '%s' "$GPU_NODES" | tr '\n' ' ')"
+    say ""
+    say "  dcgm-exporter.nodeSelector in values.yaml is empty by default and MUST be set"
+    say "  before you enable it, or the DaemonSet schedules onto every node, not just"
+    say "  these. There is no universal label for \"GPU node\" -- here is what these"
+    say "  specific nodes actually carry; pick a label from this list, don't guess:"
+    kubectl get nodes -o json 2>/dev/null | jq -r --arg nodes "$GPU_NODES" '
+      ($nodes | split("\n")) as $names
+      | .items[] | select(.metadata.name as $n | $names | index($n))
+      | "     \(.metadata.name): " + ([.metadata.labels | to_entries[] | select(.key | test("nvidia|gpu|pci"; "i")) | "\(.key)=\(.value)"] | join(", "))'
+  fi
+else
+  say "  skipped -- pass --gpu-install-exporter to run this check (only relevant if you"
+  say "  intend to set gpuMonitoring.installExporter: true; see values.yaml)"
 fi
 
 # ---------------------------------------------------------------------------

@@ -136,13 +136,17 @@ defaults:
 # ---------------------------------------------------------------------------
 # GPU / DCGM cluster-level monitoring — off by default.
 #
-# This assumes dcgm-exporter is ALREADY installed and running — typically by
-# the NVIDIA GPU Operator, sometimes as a standalone chart. Lantern does not
-# install or manage dcgm-exporter itself, the same way it doesn't install
-# node-exporter (see README "System metrics"). Turning this on only adds a
-# ServiceMonitor pointed at your existing dcgm-exporter Service, plus a
-# bundled PrometheusRule of GPU health alerts (thermal, uncorrectable ECC,
-# XID, power headroom). Neither restarts pods or touches running services.
+# Default assumption: dcgm-exporter is ALREADY installed and running —
+# typically by the NVIDIA GPU Operator, sometimes as a standalone chart.
+# Lantern does not install or manage the GPU Operator itself (driver,
+# container toolkit, device plugin are node-level infrastructure well outside
+# this project's scope) — but see installExporter below for the one narrow
+# case where Lantern *will* install just the exporter.
+#
+# Turning gpuMonitoring.enabled on adds a ServiceMonitor pointed at
+# dcgm-exporter's Service, plus a bundled PrometheusRule of GPU health alerts
+# (thermal, uncorrectable ECC, XID, power headroom). Neither restarts pods or
+# touches running services.
 #
 # Per-service GPU/inference SLOs (ttft, inter-token latency, queue depth) are
 # a separate, per-ServiceObservability concern handled by the compiler, not
@@ -154,9 +158,35 @@ defaults:
 # ---------------------------------------------------------------------------
 gpuMonitoring:
   enabled: false
+
+  # installExporter: true has Lantern install ONLY the dcgm-exporter chart
+  # (the `dcgm-exporter:` subchart block below), not the GPU Operator, not a
+  # driver, not the container toolkit. It exists for the specific gap this
+  # project can close safely: GPU nodes that already run real GPU workloads
+  # (driver + device plugin proven working — something has already been
+  # scheduled against the nvidia.com/gpu extended resource) but have no
+  # dcgm-exporter on them yet.
+  #
+  # `scripts/preflight-check.sh --gpu-install-exporter` enforces the gate:
+  # it BLOCKs if no node in the cluster currently advertises
+  # `nvidia.com/gpu` as allocatable, because that's the only cluster-visible
+  # proof the driver and device plugin are actually functional. Don't flip
+  # this on without running that check first — `lantern init` (which offers
+  # this as a sub-question) can't see the live cluster to check it for you.
+  #
+  # When false (the default), dcgmExporter.* below describes where your
+  # OWN, externally-installed dcgm-exporter lives instead.
+  installExporter: false
+
   dcgmExporter:
-    # Defaults match the NVIDIA GPU Operator's own naming. Check
+    # Defaults match the NVIDIA GPU Operator's own naming, for the
+    # installExporter: false (bring-your-own) case. Check
     # `kubectl get svc -A -l app=nvidia-dcgm-exporter` if yours differs.
+    #
+    # When installExporter: true, templates/gpu-monitoring.yaml ignores these
+    # three and computes the real values instead (the dcgm-exporter chart's
+    # own labels/namespace, deterministic from .Release.Name) — left here
+    # only as the bring-your-own default.
     namespace: gpu-operator
     selector:
       app: nvidia-dcgm-exporter
@@ -204,3 +234,47 @@ tempo:
   enabled: false
 loki:
   enabled: false
+
+# Only installed when gpuMonitoring.installExporter is true (see the comment
+# there) — this is the narrow, exporter-only alternative to the full NVIDIA
+# GPU Operator. Values here are Lantern's own overrides on top of the
+# upstream chart's defaults (https://github.com/NVIDIA/dcgm-exporter,
+# deployment/values.yaml) — anything not listed below keeps that chart's own
+# default.
+dcgm-exporter:
+  enabled: false
+
+  # REQUIRED before turning gpuMonitoring.installExporter on: leaving this
+  # empty schedules the exporter DaemonSet onto EVERY node in the cluster,
+  # including ones with no GPU, where it will CrashLoopBackOff (no
+  # /dev/nvidia* to talk to). There is no universal label for "this is a GPU
+  # node" — it depends on how your device plugin/NFD is set up.
+  # `scripts/preflight-check.sh --gpu-install-exporter` prints the label(s)
+  # actually present on the nodes advertising nvidia.com/gpu on THIS
+  # cluster; copy the real one here rather than guessing.
+  nodeSelector: {}
+
+  # Safe as an always-on default, unlike nodeSelector above: a toleration
+  # only permits scheduling onto tainted nodes, it doesn't cause it. If your
+  # GPU nodes aren't tainted this way, it's simply unused.
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+
+  # This chart ships its own ServiceMonitor by default. Lantern's own
+  # templates/gpu-monitoring.yaml already provides one (bundled with the
+  # PrometheusRule alerts, in one documented place) — turning this on too
+  # would create two ServiceMonitors scraping the same pods.
+  serviceMonitor:
+    enabled: false
+
+  # Gets pod/namespace/container labels onto DCGM series automatically, the
+  # thing docs/gpu-and-inference-observability.md otherwise walks you through
+  # enabling by hand (DCGM_EXPORTER_KUBERNETES=true on a bring-your-own
+  # install) — needed for the per-service GPU saturation SLO join described
+  # there. Verify the label names this chart version actually emits against
+  # a live cluster before trusting a saturation SLO selector on them; the
+  # same caution the docs give for the manual path applies here too.
+  kubernetes:
+    enablePodLabels: true

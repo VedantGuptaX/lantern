@@ -40,12 +40,14 @@ check them.
 
 ## GPU / DCGM monitoring — `gpuMonitoring.enabled`
 
-Off by default. When turned on, adds a `ServiceMonitor` pointed at whatever
-dcgm-exporter you already run (installed by the NVIDIA GPU Operator or its own
-chart — this chart does not install dcgm-exporter itself, the same way it
-doesn't install node-exporter) plus a `PrometheusRule` of GPU health alerts:
-thermal throttle risk, uncorrectable ECC errors, XID errors, and power
-headroom. Neither restarts pods or touches running services.
+Off by default. When turned on, adds a `ServiceMonitor` pointed at
+dcgm-exporter's Service plus a `PrometheusRule` of GPU health alerts: thermal
+throttle risk, uncorrectable ECC errors, XID errors, and power headroom.
+Neither restarts pods or touches running services.
+
+Default assumption is bring-your-own — dcgm-exporter is ALREADY installed and
+running, typically by the NVIDIA GPU Operator, sometimes as a standalone
+chart:
 
 ```yaml
 gpuMonitoring:
@@ -56,6 +58,57 @@ gpuMonitoring:
     port: metrics
 ```
 
+### `gpuMonitoring.installExporter` — the one case this chart *will* install
+
+There's a narrower, safe self-install path for GPU nodes that already run
+real GPU workloads (driver + device plugin proven working — something has
+already been scheduled against the `nvidia.com/gpu` extended resource) but
+have no dcgm-exporter on them yet. This does **not** install the NVIDIA GPU
+Operator, a driver, or the container toolkit — only the `dcgm-exporter`
+chart itself (a new dependency, condition `dcgm-exporter.enabled`), same
+class of change as node-exporter.
+
+```yaml
+gpuMonitoring:
+  enabled: true
+  installExporter: true
+dcgm-exporter:
+  enabled: true
+  nodeSelector:
+    nvidia.com/gpu.present: "true"   # REQUIRED -- see below, don't guess this
+```
+
+Before turning this on:
+
+1. Run `./scripts/preflight-check.sh --gpu-install-exporter` against the real
+   cluster. It's read-only and BLOCKs unless at least one node already
+   advertises `nvidia.com/gpu` as allocatable — the only cluster-visible
+   proof the driver/device plugin actually work — and it prints the real
+   label(s) present on those specific nodes.
+2. Set `dcgm-exporter.nodeSelector` to one of the labels the preflight check
+   printed. It defaults to `{}` (empty) deliberately: there's no universal
+   label for "this is a GPU node" across clusters, and an empty selector
+   schedules the DaemonSet onto every node, including non-GPU ones, where it
+   CrashLoopBackOffs.
+
+When `installExporter: true`, `templates/gpu-monitoring.yaml` computes the
+ServiceMonitor's namespace/selector/port from the `dcgm-exporter` subchart's
+own deterministic values (`.Release.Namespace`,
+`app.kubernetes.io/name=dcgm-exporter` + `app.kubernetes.io/instance=<release
+name>`, port `metrics`) rather than trusting `gpuMonitoring.dcgmExporter.*`,
+which still describes the bring-your-own default and would point at the
+wrong thing here. The subchart's own `serviceMonitor.enabled` is forced off
+in `values.yaml` to avoid creating two ServiceMonitors for the same pods.
+`kubernetes.enablePodLabels: true` is turned on by default too, so DCGM
+series carry pod/namespace labels immediately — the automated equivalent of
+the `DCGM_EXPORTER_KUBERNETES=true` step described below for the
+bring-your-own path.
+
+`lantern init` offers this as a sub-question when you answer "yes" to GPU
+monitoring and "no" to "is dcgm-exporter already running" — but since `init`
+never touches a live cluster (see CLAUDE.md), it can't verify GPU-readiness
+itself; the preflight check above is the actual gate.
+
 This is cluster-level infrastructure monitoring, not per-service SLOs — same
 split as node-exporter vs. an OpenTelemetry HTTP latency SLO. For a specific
 `ServiceObservability` to build its own SLO against GPU saturation (or against
@@ -63,9 +116,11 @@ an inference server's queue depth, time-to-first-token, or inter-token
 latency), use `serviceKind: inference` and `type: saturation` /
 `type: latency` with an explicit `metric:` in the compiler — see
 [docs/gpu-and-inference-observability.md](../../docs/gpu-and-inference-observability.md).
-Per-pod GPU attribution additionally requires dcgm-exporter's own
-`DCGM_EXPORTER_KUBERNETES=true` setting (configured on dcgm-exporter, not
-here) so its series carry `pod`/`namespace` labels a selector can match.
+Per-pod GPU attribution on a bring-your-own install additionally requires
+dcgm-exporter's own `DCGM_EXPORTER_KUBERNETES=true` setting (configured on
+dcgm-exporter, not here) so its series carry `pod`/`namespace` labels a
+selector can match — `installExporter: true` gets this via
+`kubernetes.enablePodLabels` instead, as above.
 
 ## Log collection — `logsCollector.enabled`
 

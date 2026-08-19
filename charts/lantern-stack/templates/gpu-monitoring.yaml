@@ -5,16 +5,44 @@ GPU / DCGM cluster-level monitoring.
 dcgm-exporter is a DaemonSet — one instance per GPU node — the same shape as
 node-exporter, and Lantern already treats node-exporter as out of its
 per-service compiler scope (see README "System metrics"). This follows the
-same pattern: a ServiceMonitor pointed at whatever dcgm-exporter you already
-run (installed by the NVIDIA GPU Operator or its own chart — NOT by this
-chart), plus a bundled PrometheusRule of GPU health alerts. Both are
-additive and don't restart pods, matching CLAUDE.md's "what's safe to do
-without asking" for this kind of change.
+same pattern: a ServiceMonitor pointed at dcgm-exporter's Service, plus a
+bundled PrometheusRule of GPU health alerts. Both are additive and don't
+restart pods, matching CLAUDE.md's "what's safe to do without asking" for
+this kind of change.
+
+Two ways dcgm-exporter gets there:
+
+  - gpuMonitoring.installExporter: false (default) — bring-your-own,
+    installed by the NVIDIA GPU Operator or its own chart, NOT by this one.
+    Namespace/selector/port come from gpuMonitoring.dcgmExporter.* as set in
+    values.yaml.
+  - gpuMonitoring.installExporter: true — the dcgm-exporter subchart
+    (condition dcgm-exporter.enabled) is this release's own dependency, so
+    its namespace and pod labels are deterministic from .Release.Name rather
+    than user-supplied guesses. Computed below instead of trusting
+    gpuMonitoring.dcgmExporter.*, which still describes the bring-your-own
+    default and would be wrong here.
 
 Per-service GPU SLOs (queue depth, ttft, inter-token latency, ...) go through
 serviceKind: inference on a ServiceObservability spec instead — see
 docs/gpu-and-inference-observability.md.
 */}}
+{{- $dcgmNamespace := .Values.gpuMonitoring.dcgmExporter.namespace }}
+{{- $dcgmSelector := .Values.gpuMonitoring.dcgmExporter.selector }}
+{{- $dcgmPort := .Values.gpuMonitoring.dcgmExporter.port }}
+{{- if .Values.gpuMonitoring.installExporter }}
+{{/* Matches the dcgm-exporter chart's own _helpers.tpl exactly: no
+namespaceOverride is set anywhere in this chart's values, so the subchart
+installs into .Release.Namespace; its selector labels are
+app.kubernetes.io/name=dcgm-exporter, app.kubernetes.io/instance=<release
+name> (subcharts share the parent's Release object); its Service always
+names the metrics port "metrics". Confirmed against the real chart
+(NVIDIA/dcgm-exporter, deployment/templates/_helpers.tpl and service.yaml)
+on 2026-08-18, not yet exercised with `helm template` end-to-end. */}}
+{{- $dcgmNamespace = .Release.Namespace }}
+{{- $dcgmSelector = dict "app.kubernetes.io/name" "dcgm-exporter" "app.kubernetes.io/instance" .Release.Name }}
+{{- $dcgmPort = "metrics" }}
+{{- end }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -26,12 +54,12 @@ metadata:
 spec:
   namespaceSelector:
     matchNames:
-      - {{ .Values.gpuMonitoring.dcgmExporter.namespace }}
+      - {{ $dcgmNamespace }}
   selector:
     matchLabels:
-      {{- toYaml .Values.gpuMonitoring.dcgmExporter.selector | nindent 6 }}
+      {{- toYaml $dcgmSelector | nindent 6 }}
   endpoints:
-    - port: {{ .Values.gpuMonitoring.dcgmExporter.port }}
+    - port: {{ $dcgmPort }}
       interval: 30s
       path: /metrics
 {{- if .Values.gpuMonitoring.alerts.enabled }}

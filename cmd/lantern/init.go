@@ -13,11 +13,37 @@ import (
 // Each field maps directly onto one or more Helm subchart toggles -- see
 // renderValues.
 type initAnswers struct {
-	Metrics  bool // kube-prometheus-stack (Prometheus, Alertmanager, Grafana, node-exporter)
-	Logs     bool // loki + logsCollector
-	Traces   bool // tempo
-	SDKAgent bool // opentelemetry-operator; only asked/meaningful if Traces
-	GPU      bool // gpuMonitoring (ServiceMonitor/PrometheusRule only -- dcgm-exporter itself is bring-your-own)
+	Metrics    bool // kube-prometheus-stack (Prometheus, Alertmanager, Grafana, node-exporter)
+	Logs       bool // loki + logsCollector
+	Traces     bool // tempo
+	SDKAgent   bool // opentelemetry-operator; only asked/meaningful if Traces
+	GPU        bool // gpuMonitoring wanted at all; only asked if Metrics
+	DCGMExists bool // dcgm-exporter already running; only asked if GPU
+	GPUReady   bool // GPU nodes already schedule real GPU workloads (driver+device plugin proven); only asked if GPU && !DCGMExists
+}
+
+// installExporter reports whether these answers want Lantern to install
+// dcgm-exporter itself (the gpuMonitoring.installExporter / dcgm-exporter.enabled
+// pair in values.yaml), rather than assuming a bring-your-own install.
+//
+// This is deliberately narrow: it's only true when the user said there's no
+// dcgm-exporter yet AND that the GPU nodes already run real GPU workloads
+// (driver + device plugin proven working). `lantern init` never touches a
+// live cluster (see CLAUDE.md), so it cannot verify that claim itself --
+// `scripts/preflight-check.sh --gpu-install-exporter` is the actual gate,
+// against the real cluster, before anyone runs `helm install`.
+func (a initAnswers) installExporter() bool {
+	return a.GPU && !a.DCGMExists && a.GPUReady
+}
+
+// gpuMonitoringWanted reports whether gpuMonitoring.enabled should end up
+// true. A "yes" to the top-level GPU question isn't enough by itself: with
+// no dcgm-exporter running and no GPU nodes ready to host one, there is
+// nothing for the ServiceMonitor/PrometheusRule this turns on to scrape or
+// evaluate -- same reasoning as the existing "metrics off skips GPU
+// entirely" rule below, just discovered one layer deeper.
+func (a initAnswers) gpuMonitoringWanted() bool {
+	return a.GPU && (a.DCGMExists || a.GPUReady)
 }
 
 // grafanaOnly reports whether the answers want a Grafana UI without the rest
@@ -158,6 +184,26 @@ func runInitPrompts(r io.Reader, w io.Writer) (initAnswers, error) {
 		if a.GPU, err = promptYesNo(br, w, "GPU node monitoring (DCGM)? Skip if you have no GPU nodes.", false); err != nil {
 			return a, err
 		}
+		if a.GPU {
+			if a.DCGMExists, err = promptYesNo(br, w,
+				"  Is dcgm-exporter already running on those GPU nodes (via the NVIDIA\n"+
+					"  GPU Operator or its own install)?", true); err != nil {
+				return a, err
+			}
+			if !a.DCGMExists {
+				if a.GPUReady, err = promptYesNo(br, w,
+					"  Do those GPU nodes already run real GPU workloads successfully --\n"+
+						"  i.e. something has already been scheduled against the nvidia.com/gpu\n"+
+						"  resource, so the driver and device plugin are proven working, just no\n"+
+						"  dcgm-exporter yet? If so I can install ONLY dcgm-exporter (not the\n"+
+						"  full GPU Operator, no driver changes). Answering no leaves GPU\n"+
+						"  monitoring off entirely -- there'd be nothing safe to install and\n"+
+						"  nothing running to point a ServiceMonitor at.",
+					false); err != nil {
+					return a, err
+				}
+			}
+		}
 	}
 
 	return a, nil
@@ -255,17 +301,35 @@ func renderValues(a initAnswers) string {
 	fmt.Fprintf(&b, "tempo:\n  enabled: %v\n\n", a.Traces)
 	fmt.Fprintf(&b, "collector:\n  enabled: %v\n\n", a.collectorNeeded())
 	fmt.Fprintf(&b, "opentelemetry-operator:\n  enabled: %v\n\n", a.operatorNeeded())
-	fmt.Fprintf(&b, "gpuMonitoring:\n  enabled: %v\n", a.GPU)
+	fmt.Fprintf(&b, "gpuMonitoring:\n  enabled: %v\n  installExporter: %v\n", a.gpuMonitoringWanted(), a.installExporter())
+	fmt.Fprintf(&b, "dcgm-exporter:\n  enabled: %v\n", a.installExporter())
 
 	if a.Traces && !a.SDKAgent {
 		b.WriteString("\n# Traces without SDK/agent instrumentation means eBPF (OBI). This chart\n")
 		b.WriteString("# doesn't deploy OBI itself (a standalone Helm release, bring-your-own) --\n")
 		b.WriteString("# see docs/getting-signals-into-grafana.md for a verified install command.\n")
 	}
-	if a.GPU {
+	if a.gpuMonitoringWanted() && !a.installExporter() {
 		b.WriteString("\n# gpuMonitoring.enabled only adds a ServiceMonitor + PrometheusRule --\n")
 		b.WriteString("# dcgm-exporter itself is bring-your-own (the NVIDIA GPU Operator's job, not\n")
 		b.WriteString("# this chart's). See README's GPU section before turning this on.\n")
+	}
+	if a.installExporter() {
+		b.WriteString("\n# dcgm-exporter.enabled installs ONLY the exporter, not the GPU Operator --\n")
+		b.WriteString("# no driver, no container toolkit. Before running `helm install`:\n")
+		b.WriteString("#   1. Run `./scripts/preflight-check.sh --gpu-install-exporter` against the\n")
+		b.WriteString("#      real cluster -- it BLOCKs unless a node already advertises nvidia.com/gpu\n")
+		b.WriteString("#      as allocatable, and prints candidate labels for the next step.\n")
+		b.WriteString("#   2. Set dcgm-exporter.nodeSelector in values.yaml to one of those labels.\n")
+		b.WriteString("#      It's empty by default; left empty, the DaemonSet schedules onto every\n")
+		b.WriteString("#      node, not just GPU ones, and CrashLoopBackOffs everywhere else.\n")
+	}
+	if a.GPU && !a.DCGMExists && !a.GPUReady {
+		b.WriteString("\n# You said you have GPU nodes, no dcgm-exporter running yet, and those nodes\n")
+		b.WriteString("# aren't yet running real GPU workloads -- so there's nothing safe to install\n")
+		b.WriteString("# or point a ServiceMonitor at. GPU monitoring is left off (gpuMonitoring.\n")
+		b.WriteString("# enabled: false above). Get the NVIDIA driver + device plugin working first\n")
+		b.WriteString("# (NVIDIA GPU Operator is the standard path), then re-run `lantern init`.\n")
 	}
 
 	return b.String()
@@ -309,6 +373,13 @@ func resourceEstimate(a initAnswers) string {
 		if !a.SDKAgent {
 			rows = append(rows, row{"OBI (eBPF probe, bring-your-own)", 0, 0, 10, 256})
 		}
+	}
+	if a.installExporter() {
+		// Low end of the request range NVIDIA publishes (README's GPU
+		// prerequisites table) -- unlike the rows above, not measured
+		// against a real cluster this session, since this bastion's cluster
+		// has no GPU nodes to measure against.
+		rows = append(rows, row{"dcgm-exporter (installExporter -- NVIDIA's published low end, not measured this session)", 0, 0, 10, 128})
 	}
 
 	var totalCPU, totalMem, perNodeCPU, perNodeMem int
