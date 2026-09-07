@@ -28,6 +28,22 @@
 # without real hardware. This script checks the failure looks like "no GPU
 # device", not like "RBAC denied" or "ImagePullBackOff" or "stuck Pending".
 #
+# Also covers the two dashboard pieces added alongside installExporter:
+#   - "no GPU" scenario: a plain install with gpuMonitoring left at its
+#     default (off) must emit ZERO GPU-shaped objects -- no fleet dashboard,
+#     no dcgm ServiceMonitor/PrometheusRule. Checked via `helm template`
+#     before the cluster is even touched, since this needs no live API
+#     server at all.
+#   - "fake GPU" scenario: once gpuMonitoring + installExporter are on, the
+#     fleet dashboard ConfigMap (templates/gpu-dashboard.yaml) must exist,
+#     carry valid JSON, and be labeled grafana_dashboard: "1" so a real
+#     Grafana sidecar would actually pick it up -- checked live, against the
+#     real object the API server stored, not just what was submitted.
+#   - the compiler's per-service GPU panel (pkg/emit/grafana) gets exercised
+#     too: the bundled gpu-inference example is discovered/synthesized/
+#     applied for real, same as verify-kind.sh's own end-to-end section, and
+#     its dashboard ConfigMap is checked for the GPU utilization panel.
+#
 # Usage:
 #   ./scripts/verify-gpu-exporter-kind.sh          # run everything, then tear down
 #   ./scripts/verify-gpu-exporter-kind.sh --keep   # leave the cluster running afterwards
@@ -242,6 +258,25 @@ kubectl patch node "$GPU_NODE" --subresource=status --type=merge -p \
 run "helm dependency update  ← pulls the real dcgm-exporter chart" \
   helm dependency update charts/lantern-stack
 
+# --- "no GPU cluster" scenario: default values, gpuMonitoring untouched ----
+#
+# No live cluster needed for this one -- `helm template` is enough, and
+# running it BEFORE the live install below means a regression here fails
+# fast instead of after several more minutes of cluster work.
+rule
+log "STEP $((++STEP)): \"no GPU cluster\" scenario — default values must emit ZERO GPU-shaped objects"
+log "────────────────────────────────────────────────────────────────"
+NO_GPU_RENDER=$(helm template lantern charts/lantern-stack -n "$NS" 2>&1)
+echo "$NO_GPU_RENDER" >>"$REPORT"
+NO_GPU_HITS=$(echo "$NO_GPU_RENDER" | grep -ic "gpu-fleet-dashboard\|dcgm" || true)
+if [ "${NO_GPU_HITS:-0}" -eq 0 ]; then
+  log "✅ a default install (gpuMonitoring left off) renders no fleet dashboard, no dcgm ServiceMonitor/PrometheusRule, nothing GPU-shaped at all"
+  RESULTS+=("PASS  no-GPU install emits zero GPU-shaped objects")
+else
+  log "❌ found $NO_GPU_HITS GPU-related match(es) in a render where gpuMonitoring was never turned on -- something is on by default that shouldn't be"
+  RESULTS+=("FAIL  no-GPU install unexpectedly emits GPU-shaped object(s)")
+fi
+
 run_info "helm install: gpuMonitoring.installExporter + dcgm-exporter, nothing else" \
   helm install lantern charts/lantern-stack \
     -n "$NS" --create-namespace \
@@ -304,6 +339,45 @@ if [ "$SM_NS" = "$NS" ] && [ "$SM_SELECTOR" = "$POD_LABELS" ] && [ -n "$SM_SELEC
 else
   log "❌ mismatch — this ServiceMonitor would match zero pods (or the wrong ones)"
   RESULTS+=("FAIL  ServiceMonitor selector does not match real pod labels")
+fi
+
+rule
+log "STEP $((++STEP)): \"fake GPU cluster\" scenario — does the fleet dashboard ConfigMap actually exist, with real, valid JSON?"
+log "────────────────────────────────────────────────────────────────"
+DASH_JSON=$(kubectl get configmap -n "$NS" lantern-gpu-fleet-dashboard -o jsonpath='{.data.gpu-fleet\.json}' 2>/dev/null)
+DASH_LABEL=$(kubectl get configmap -n "$NS" lantern-gpu-fleet-dashboard -o jsonpath='{.metadata.labels.grafana_dashboard}' 2>/dev/null)
+if [ -z "$DASH_JSON" ]; then
+  log "❌ ConfigMap lantern-gpu-fleet-dashboard not found (or has no gpu-fleet.json key) -- a real Grafana sidecar would have nothing to discover"
+  RESULTS+=("FAIL  fleet dashboard ConfigMap missing")
+elif [ "$DASH_LABEL" != "1" ]; then
+  log "❌ ConfigMap exists but grafana_dashboard label = \"$DASH_LABEL\", want \"1\" -- the sidecar (searchNamespace: ALL, label grafana_dashboard: \"1\") would never pick this up"
+  RESULTS+=("FAIL  fleet dashboard ConfigMap missing the grafana_dashboard=1 label")
+elif ! echo "$DASH_JSON" | jq -e '.panels | length > 0' >/dev/null 2>&1; then
+  log "❌ ConfigMap's gpu-fleet.json is not valid JSON, or has no panels -- this is what the API server actually stored, not what was submitted"
+  echo "$DASH_JSON" | tee -a "$REPORT"
+  RESULTS+=("FAIL  fleet dashboard JSON invalid or empty as stored by the API server")
+else
+  PANEL_COUNT=$(echo "$DASH_JSON" | jq '.panels | length')
+  log "✅ ConfigMap present, labeled grafana_dashboard=1, $PANEL_COUNT valid panels as actually stored by the API server"
+  RESULTS+=("PASS  fleet dashboard ConfigMap present, labeled, and valid")
+fi
+
+rule
+log "STEP $((++STEP)): does the compiler's per-service GPU panel survive a real discover → synth → apply round trip?"
+log "────────────────────────────────────────────────────────────────"
+run "build the lantern CLI" make build
+LANTERN="$(pwd)/bin/lantern"
+run "apply the bundled gpu-inference example (real ServiceMonitor + PrometheusRule + dashboard ConfigMap, live)" bash -c "
+  kubectl create namespace ml --dry-run=client -o yaml | kubectl apply -f - &&
+  '$LANTERN' synth -stack testdata/golden/gpu-inference/stack.yaml testdata/golden/gpu-inference/service.yaml -quiet \
+    | kubectl apply -f -"
+INFERENCE_DASH=$(kubectl get configmap -n ml lantern-dashboard-llama-70b-server -o jsonpath='{.data.llama-70b-server\.json}' 2>/dev/null)
+if echo "$INFERENCE_DASH" | jq -e '.panels[] | select(.title == "GPU utilization (this service'"'"'s pods)")' >/dev/null 2>&1; then
+  log "✅ the live, applied inference-service dashboard has the GPU utilization panel — proven through a real API server, not just helm template"
+  RESULTS+=("PASS  per-service GPU panel present in the live-applied dashboard")
+else
+  log "❌ GPU utilization panel missing from the live-applied inference dashboard"
+  RESULTS+=("FAIL  per-service GPU panel missing from live-applied dashboard")
 fi
 
 rule

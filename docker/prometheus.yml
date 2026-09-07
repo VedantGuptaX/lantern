@@ -28,3 +28,10 @@ scrape_configs:
   - job_name: node
     static_configs:
       - targets: ['node-exporter:9100']
+
+  # TEMPORARY, manual-testing only: fake DCGM series (docker/fake-dcgm-exporter)
+  # for eyeballing the GPU fleet + per-service dashboards without real GPU
+  # hardware. Remove this job (and the container) once done testing.
+  - job_name: dcgm-fake
+    static_configs:
+      - targets: ['lantern-fake-dcgm-exporter:9400']

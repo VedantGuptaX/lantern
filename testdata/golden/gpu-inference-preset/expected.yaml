@@ -825,6 +825,38 @@ data:
         },
         {
           "datasource": {
+            "type": "prometheus",
+            "uid": "prom-main"
+          },
+          "description": "Requires dcgm-exporter's Kubernetes pod-mapping to be on, and matches pods by name prefix (best-effort, not a guaranteed-unique join) -- see docs/gpu-and-inference-observability.md before trusting this against a real SLO.",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent"
+            }
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 24
+          },
+          "id": 7,
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prom-main"
+              },
+              "expr": "DCGM_FI_DEV_GPU_UTIL{namespace=\"ml\", pod=~\"llama-70b-server-.*\"}",
+              "legendFormat": "{{pod}} gpu{{gpu}}",
+              "refId": "A"
+            }
+          ],
+          "title": "GPU utilization (this service's pods)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
             "type": "loki",
             "uid": "loki-main"
           },
@@ -833,9 +865,9 @@ data:
             "h": 10,
             "w": 24,
             "x": 0,
-            "y": 24
+            "y": 34
           },
-          "id": 7,
+          "id": 8,
           "targets": [
             {
               "datasource": {

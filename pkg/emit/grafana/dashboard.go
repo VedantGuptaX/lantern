@@ -37,9 +37,10 @@ type Diagnostic struct {
 
 // Input is the pre-resolved input for one service's dashboard.
 type Input struct {
-	Service   string
-	Namespace string
-	Team      string
+	Service     string
+	Namespace   string
+	Team        string
+	ServiceKind api.ServiceKind
 
 	// SLOs drive the burn-rate and error-budget panels, built from the exact
 	// recording rules pkg/emit/prom.BuildRules already emits — the numbers on
@@ -111,6 +112,10 @@ func Build(in Input) (*kube.Object, []Diagnostic, error) {
 				Message: "no SLOs declared; the dashboard has no burn-rate panels",
 			})
 		}
+	}
+
+	if in.ServiceKind == api.KindInference && in.PrometheusUID != "" {
+		panels.addFull(gpuUtilizationPanel(in.Namespace, in.Service, in.PrometheusUID))
 	}
 
 	if in.LogsEnabled && in.LokiUID != "" {
@@ -307,6 +312,43 @@ func errorBudgetPanel(sloName, sloID, promUID string) panelJSON {
 			},
 		},
 		FieldConfig: &fieldConfig{Defaults: fieldDefaults{Unit: "percentunit"}},
+	}
+}
+
+// gpuUtilizationPanel scopes DCGM's node-level GPU series down to this one
+// service's pods -- the join described in
+// docs/gpu-and-inference-observability.md#joining-per-service-slos-to-dcgm-per-pod-gpu-attribution.
+//
+// This is a best-effort regex on the pod name prefix, not a guaranteed
+// unique selector: it assumes Deployment-style pod naming
+// (<service>-<hash>-<hash>) and will also match another Deployment that
+// happens to share this one's name as a strict prefix (e.g. a
+// "llama-70b-server-canary" alongside "llama-70b-server"). There is no
+// stronger DCGM-side label to join on -- the underlying series only ever
+// carry pod/namespace/container, never a deployment name -- so this is the
+// same tradeoff the docs already describe for a saturation SLO on a DCGM
+// metric, just applied to a panel instead. It also depends entirely on
+// dcgm-exporter's Kubernetes pod-mapping being turned on in the first place
+// (DCGM_EXPORTER_KUBERNETES=true, or kubernetes.enablePodLabels on the
+// gpuMonitoring.installExporter path) -- without that, DCGM series carry no
+// pod label at all and this panel renders empty, not wrong.
+func gpuUtilizationPanel(namespace, service, promUID string) panelJSON {
+	ds := dsRef{Type: "prometheus", UID: promUID}
+	expr := fmt.Sprintf(`DCGM_FI_DEV_GPU_UTIL{namespace=%q, pod=~%q}`, namespace, service+"-.*")
+	return panelJSON{
+		Title:       "GPU utilization (this service's pods)",
+		Description: "Requires dcgm-exporter's Kubernetes pod-mapping to be on, and matches pods by name prefix (best-effort, not a guaranteed-unique join) -- see docs/gpu-and-inference-observability.md before trusting this against a real SLO.",
+		Type:        "timeseries",
+		Datasource:  ds,
+		Targets: []targetJSON{
+			{
+				Datasource:   ds,
+				RefID:        "A",
+				Expr:         expr,
+				LegendFormat: "{{pod}} gpu{{gpu}}",
+			},
+		},
+		FieldConfig: &fieldConfig{Defaults: fieldDefaults{Unit: "percent"}},
 	}
 }
 

@@ -1,0 +1,274 @@
+{
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Recorded by the same rules that drive burn-rate alerts (lantern:sli_error:ratio_rate*, lantern:current_burn_rate:ratio) \u2014 this panel and the alert can never disagree.",
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "{__name__=~\"lantern:sli_error:ratio_rate.+\", lantern_id=\"llama-70b-server-ttft\"}",
+          "legendFormat": "{{lantern_window}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "lantern:current_burn_rate:ratio{lantern_id=\"llama-70b-server-ttft\"}",
+          "legendFormat": "current burn rate",
+          "refId": "B"
+        }
+      ],
+      "title": "ttft: SLI error ratio by window",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 0
+      },
+      "id": 2,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "lantern:period_error_budget_remaining:ratio{lantern_id=\"llama-70b-server-ttft\"}",
+          "refId": "A"
+        }
+      ],
+      "title": "ttft: error budget remaining",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Recorded by the same rules that drive burn-rate alerts (lantern:sli_error:ratio_rate*, lantern:current_burn_rate:ratio) \u2014 this panel and the alert can never disagree.",
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "{__name__=~\"lantern:sli_error:ratio_rate.+\", lantern_id=\"llama-70b-server-inter-token-latency\"}",
+          "legendFormat": "{{lantern_window}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "lantern:current_burn_rate:ratio{lantern_id=\"llama-70b-server-inter-token-latency\"}",
+          "legendFormat": "current burn rate",
+          "refId": "B"
+        }
+      ],
+      "title": "inter-token-latency: SLI error ratio by window",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 8
+      },
+      "id": 4,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "lantern:period_error_budget_remaining:ratio{lantern_id=\"llama-70b-server-inter-token-latency\"}",
+          "refId": "A"
+        }
+      ],
+      "title": "inter-token-latency: error budget remaining",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Recorded by the same rules that drive burn-rate alerts (lantern:sli_error:ratio_rate*, lantern:current_burn_rate:ratio) \u2014 this panel and the alert can never disagree.",
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 0,
+        "y": 16
+      },
+      "id": 5,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "{__name__=~\"lantern:sli_error:ratio_rate.+\", lantern_id=\"llama-70b-server-queue-depth\"}",
+          "legendFormat": "{{lantern_window}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "lantern:current_burn_rate:ratio{lantern_id=\"llama-70b-server-queue-depth\"}",
+          "legendFormat": "current burn rate",
+          "refId": "B"
+        }
+      ],
+      "title": "queue-depth: SLI error ratio by window",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 16
+      },
+      "id": 6,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "lantern:period_error_budget_remaining:ratio{lantern_id=\"llama-70b-server-queue-depth\"}",
+          "refId": "A"
+        }
+      ],
+      "title": "queue-depth: error budget remaining",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Requires dcgm-exporter's Kubernetes pod-mapping to be on, and matches pods by name prefix (best-effort, not a guaranteed-unique join) -- see docs/gpu-and-inference-observability.md before trusting this against a real SLO.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        }
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "id": 7,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "DCGM_FI_DEV_GPU_UTIL{namespace=\"ml\", pod=~\"llama-70b-server-.*\"}",
+          "legendFormat": "{{pod}} gpu{{gpu}}",
+          "refId": "A"
+        }
+      ],
+      "title": "GPU utilization (this service's pods)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "Requires Lantern's log-collection DaemonSet (logsCollector.enabled) to actually ship pod logs into Loki \u2014 see docs/getting-signals-into-grafana.md. Filtered by namespace=\"ml\", deployment=\"llama-70b-server\".",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "id": 8,
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "{namespace=\"ml\", deployment=\"llama-70b-server\"}",
+          "refId": "A"
+        }
+      ],
+      "title": "Logs",
+      "type": "logs"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "lantern",
+    "team:ml-platform"
+  ],
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "Lantern: llama-70b-server",
+  "uid": "lantern-llama-70b-server",
+  "version": 1
+}

@@ -198,6 +198,19 @@ gpuMonitoring:
     thermalCriticalC: 85
     powerHeadroomPercent: 5
 
+  # Fleet-wide health dashboard (templates/gpu-dashboard.yaml) — utilization,
+  # memory-copy, temperature (with the same thermalCriticalC threshold line
+  # the alert above uses), power draw vs. cap, ECC/XID error tables. Alerts
+  # alone tell you something's wrong; this is the "what does the fleet
+  # actually look like right now" view alerts don't cover.
+  dashboard:
+    enabled: true
+    # Must match whatever Prometheus datasource UID your Grafana actually has
+    # — "prometheus" is kube-prometheus-stack's own default (see
+    # values-quickstart.yaml), not something this chart can discover for a
+    # bring-your-own Grafana.
+    datasourceUID: prometheus
+
 # ---------------------------------------------------------------------------
 # Subcharts — all off. See values-quickstart.yaml.
 # ---------------------------------------------------------------------------

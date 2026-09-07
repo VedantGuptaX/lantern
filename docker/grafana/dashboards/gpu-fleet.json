@@ -1,0 +1,302 @@
+{
+  "uid": "lantern-gpu-fleet",
+  "title": "Lantern: GPU Fleet",
+  "tags": [
+    "lantern",
+    "gpu"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "GPU nodes",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "count(count by (Hostname) (DCGM_FI_DEV_GPU_UTIL))"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Total GPUs",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 8,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "count(DCGM_FI_DEV_GPU_UTIL)"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Fleet avg utilization",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "avg(DCGM_FI_DEV_GPU_UTIL)"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "GPU utilization",
+      "type": "timeseries",
+      "description": "DCGM_FI_DEV_GPU_UTIL per GPU. No per-pod breakdown here -- that's the per-service inference dashboard instead, which needs dcgm-exporter's Kubernetes pod-mapping turned on (see docs/gpu-and-inference-observability.md).",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "DCGM_FI_DEV_GPU_UTIL",
+          "legendFormat": "{{Hostname}} gpu{{gpu}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Memory-copy utilization",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 12
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "DCGM_FI_DEV_MEM_COPY_UTIL",
+          "legendFormat": "{{Hostname}} gpu{{gpu}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Temperature",
+      "type": "timeseries",
+      "description": "Red threshold line is gpuMonitoring.alerts.thermalCriticalC (85C) -- the exact same value LanternGPUThermalThrottleImminent alerts on, so this line and that alert can never disagree.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 85
+              }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "DCGM_FI_DEV_GPU_TEMP",
+          "legendFormat": "{{Hostname}} gpu{{gpu}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Power draw vs. cap",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "watt"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "DCGM_FI_DEV_POWER_USAGE",
+          "legendFormat": "{{Hostname}} gpu{{gpu}} draw"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "B",
+          "expr": "DCGM_FI_DEV_POWER_MGMT_LIMIT",
+          "legendFormat": "{{Hostname}} gpu{{gpu}} cap"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Uncorrectable ECC errors (24h)",
+      "type": "table",
+      "description": "24h window for visibility, not the 15m window LanternGPUUncorrectableECCError alerts on -- a page fires faster than this panel updates its story. Any nonzero row here is a GPU to stop trusting results from until checked with nvidia-smi -q -d ECC.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 36
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "increase(DCGM_FI_DEV_ECC_DBE_VOL_TOTAL[24h]) > 0",
+          "format": "table",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "XID errors (24h)",
+      "type": "table",
+      "description": "24h window for visibility, not the 15m window LanternGPUXIDError alerts on. Cross-reference the XID code against NVIDIA's XID error table -- some (e.g. 79, GPU fallen off the bus) mean the GPU needs a node reboot, not just a workload drain.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 36
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "refId": "A",
+          "expr": "increase(DCGM_FI_DEV_XID_ERRORS[24h]) > 0",
+          "format": "table",
+          "instant": true
+        }
+      ]
+    }
+  ]
+}

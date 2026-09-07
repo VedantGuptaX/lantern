@@ -41,9 +41,14 @@ check them.
 ## GPU / DCGM monitoring — `gpuMonitoring.enabled`
 
 Off by default. When turned on, adds a `ServiceMonitor` pointed at
-dcgm-exporter's Service plus a `PrometheusRule` of GPU health alerts: thermal
-throttle risk, uncorrectable ECC errors, XID errors, and power headroom.
-Neither restarts pods or touches running services.
+dcgm-exporter's Service, a `PrometheusRule` of GPU health alerts (thermal
+throttle risk, uncorrectable ECC errors, XID errors, power headroom), and
+(`gpuMonitoring.dashboard.enabled`, on by default alongside it) a fleet-wide
+Grafana dashboard — GPU/node count, per-GPU utilization and memory-copy,
+temperature with the same `thermalCriticalC` threshold line the alert above
+uses, power draw vs. cap, and 24h ECC/XID error tables. See
+`templates/gpu-dashboard.yaml`. None of this restarts pods or touches running
+services.
 
 Default assumption is bring-your-own — dcgm-exporter is ALREADY installed and
 running, typically by the NVIDIA GPU Operator, sometimes as a standalone
@@ -157,6 +162,16 @@ every `ServiceObservability`, gated on `backends.dashboards.type: grafana`
 enables (`ConfigMap` labeled `grafana_dashboard: "1"`). Panels reuse the
 exact recording rules that drive the burn-rate alerts, so the dashboard and
 the alert can never disagree.
+
+For `serviceKind: inference` specifically, the compiler adds one more panel:
+GPU utilization scoped to that service's own pods (`DCGM_FI_DEV_GPU_UTIL{namespace=...,
+pod=~"<service>-.*"}`). This needs dcgm-exporter's Kubernetes pod-mapping
+turned on (see [docs/gpu-and-inference-observability.md](../../docs/gpu-and-inference-observability.md))
+and is a best-effort pod-name-prefix match, not a guaranteed-unique join —
+the panel's own description says so, don't trust it blind against a real SLO
+without checking. This is separate from the `gpuMonitoring` fleet dashboard
+above: that one is cluster-wide and chart-shipped, this one is per-service
+and compiler-generated.
 
 **`backends.{metrics,traces,logs}.datasource` have to actually match what's
 provisioned, or panels render skipped, not broken-looking.**

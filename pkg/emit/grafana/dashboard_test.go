@@ -152,6 +152,64 @@ func TestBuildIncludesExtraPanels(t *testing.T) {
 	}
 }
 
+// --- GPU utilization panel (serviceKind: inference) --------------------------
+
+func TestBuildAddsGPUPanelForInferenceServiceKind(t *testing.T) {
+	in := baseInput()
+	in.ServiceKind = api.KindInference
+	obj, _, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	doc := dashboardData(t, obj)
+	panels := doc["panels"].([]any)
+	// 1 SLO -> 2 panels, + GPU panel, + logs + traces = 5.
+	if len(panels) != 5 {
+		t.Fatalf("got %d panels, want 5: %+v", len(panels), panels)
+	}
+	gpu := panels[2].(map[string]any)
+	if gpu["title"] != "GPU utilization (this service's pods)" {
+		t.Errorf("panel 2 = %+v, want the GPU utilization panel right after the SLO panels", gpu)
+	}
+	target := gpu["targets"].([]any)[0].(map[string]any)
+	wantExpr := `DCGM_FI_DEV_GPU_UTIL{namespace="shop", pod=~"checkout-.*"}`
+	if target["expr"] != wantExpr {
+		t.Errorf("GPU panel expr = %q, want %q", target["expr"], wantExpr)
+	}
+}
+
+func TestBuildOmitsGPUPanelForNonInferenceServiceKind(t *testing.T) {
+	in := baseInput() // ServiceKind left at its zero value
+	obj, _, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	doc := dashboardData(t, obj)
+	for _, p := range doc["panels"].([]any) {
+		if p.(map[string]any)["title"] == "GPU utilization (this service's pods)" {
+			t.Errorf("GPU panel present for a non-inference service: %+v", p)
+		}
+	}
+}
+
+func TestBuildOmitsGPUPanelWithNoDatasourceEvenForInference(t *testing.T) {
+	in := baseInput()
+	in.ServiceKind = api.KindInference
+	in.PrometheusUID = ""
+	obj, _, err := Build(in)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	// PrometheusUID empty means SLO panels AND the GPU panel both skip, but
+	// logs+traces still fire -- same "don't guess a UID" rule as everything
+	// else that depends on backends.metrics.datasource.
+	doc := dashboardData(t, obj)
+	panels := doc["panels"].([]any)
+	if len(panels) != 2 {
+		t.Fatalf("got %d panels, want 2 (logs + traces only): %+v", len(panels), panels)
+	}
+}
+
 // --- RFC 6902 patch application ---------------------------------------------
 
 func TestApplyPatchAddReplaceRemove(t *testing.T) {

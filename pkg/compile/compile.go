@@ -322,6 +322,7 @@ func Compile(svc api.ServiceObservability, stack api.ObservabilityStack, facts F
 			Service:       name,
 			Namespace:     ns,
 			Team:          svc.Spec.Team,
+			ServiceKind:   svc.Spec.ServiceKind,
 			SLOs:          slos,
 			ExtraPanels:   svc.Spec.Dashboard.ExtraPanels,
 			Patches:       svc.Spec.Dashboard.Patches,
